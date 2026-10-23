@@ -1,0 +1,333 @@
+/**
+ * SIAM - Aluminios Cristales Villegas
+ * Hoja de estilos moderna y responsive para PWA móvil y tablet
+ */
+
+:root {
+    --primary: #0284C7;
+    --primary-hover: #0369A1;
+    --primary-dark: #075985;
+    --primary-light: #E0F2FE;
+    --secondary: #475569;
+    --success: #10B981;
+    --warning: #F59E0B;
+    --danger: #EF4444;
+    --dark: #0F172A;
+    --card-bg: #FFFFFF;
+    --bg-light: #F8FAFC;
+    --border-color: #E2E8F0;
+    --text-primary: #1E293B;
+    --text-muted: #64748B;
+    --radius-sm: 8px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(15,23,42,0.08);
+    --shadow-lg: 0 10px 25px rgba(15,23,42,0.12);
+}
+
+/* Base & Typography */
+body {
+    background-color: var(--bg-light);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    -webkit-tap-highlight-color: transparent;
+    padding-bottom: 70px; /* Espacio para barra de navegación móvil */
+}
+
+/* Navbar corporativo */
+.navbar-siam {
+    background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+    border-bottom: 2px solid var(--primary);
+    padding: 0.65rem 1rem;
+}
+
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.15rem;
+    letter-spacing: -0.3px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.brand-badge {
+    background: var(--primary);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.5px;
+}
+
+/* Tarjetas y Contenedores */
+.siam-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 1.25rem;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.siam-card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.card-header-siam {
+    background: #F1F5F9;
+    border-bottom: 1px solid var(--border-color);
+    padding: 0.85rem 1.1rem;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Botones Touch-Friendly para Operarios (>= 48px de alto para fácil pulsación con guantes/una mano) */
+.btn-touch {
+    min-height: 48px;
+    font-weight: 600;
+    font-size: 1rem;
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    transition: all 0.15s ease-in-out;
+}
+
+.btn-touch:active {
+    transform: scale(0.98);
+}
+
+.btn-primary-siam {
+    background-color: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+.btn-primary-siam:hover, .btn-primary-siam:focus {
+    background-color: var(--primary-hover);
+    border-color: var(--primary-hover);
+    color: white;
+}
+
+.btn-camera-trigger {
+    background: linear-gradient(135deg, #0284C7 0%, #0369A1 100%);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+    font-size: 1.05rem;
+    width: 100%;
+}
+
+.btn-camera-trigger:hover {
+    background: linear-gradient(135deg, #0369A1 0%, #075985 100%);
+    color: white;
+}
+
+/* Visor de Cámara y Previsualización */
+.preview-container {
+    background: #0F172A;
+    border-radius: var(--radius-sm);
+    min-height: 240px;
+    max-height: 420px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    border: 2px dashed #475569;
+}
+
+.preview-container img, .preview-container canvas {
+    max-width: 100%;
+    max-height: 420px;
+    object-fit: contain;
+}
+
+.preview-placeholder {
+    color: #94A3B8;
+    text-align: center;
+    padding: 2rem 1rem;
+}
+
+.preview-placeholder i {
+    font-size: 3rem;
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #64748B;
+}
+
+/* Badges de Control de Calidad */
+.qc-badge {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 0.3px;
+}
+
+.qc-aprobado {
+    background-color: rgba(16, 185, 129, 0.15);
+    color: #047857;
+    border: 1px solid #10B981;
+}
+
+.qc-condicion {
+    background-color: rgba(245, 158, 11, 0.15);
+    color: #B45309;
+    border: 1px solid #F59E0B;
+}
+
+.qc-rechazado {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #B91C1C;
+    border: 1px solid #EF4444;
+}
+
+.qc-esperando {
+    background-color: #E2E8F0;
+    color: #64748B;
+    border: 1px solid #CBD5E1;
+}
+
+/* Tarjetas de Métricas KPI */
+.metric-box {
+    background: #F8FAFC;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 0.85rem 1rem;
+    text-align: center;
+}
+
+.metric-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--primary-dark);
+    line-height: 1.2;
+}
+
+.metric-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    margin-top: 4px;
+}
+
+/* Canvas del Plano de Corte 2D */
+.cutting-canvas-wrapper {
+    background: #F1F5F9;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    padding: 8px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 320px;
+}
+
+#cuttingCanvas {
+    max-width: 100%;
+    height: auto;
+    background: #FFFFFF;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    border: 1px solid #CBD5E1;
+}
+
+/* Banner de Instalacion PWA */
+.pwa-install-banner {
+    background: linear-gradient(135deg, #075985 0%, #0284C7 100%);
+    color: white;
+    border-radius: var(--radius-md);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+    box-shadow: var(--shadow-md);
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+/* Barra de Estado Offline */
+.offline-indicator {
+    background: #DC2626;
+    color: white;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-align: center;
+    padding: 4px 8px;
+    display: none;
+}
+
+/* Spinner Overlay para Cargas Móviles */
+.loading-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: white;
+}
+
+.loading-spinner {
+    width: 3.5rem;
+    height: 3.5rem;
+    border-width: 4px;
+}
+
+/* Barra inferior móvil rápida */
+.mobile-bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-around;
+    padding: 6px 0;
+    z-index: 1000;
+    box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+}
+
+.mobile-bottom-nav a, .mobile-bottom-nav button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 8px;
+    text-decoration: none;
+}
+
+.mobile-bottom-nav a.active, .mobile-bottom-nav button.active {
+    color: var(--primary);
+}
+
+.mobile-bottom-nav i {
+    font-size: 1.25rem;
+}
