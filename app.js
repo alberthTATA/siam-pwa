@@ -205,6 +205,16 @@ function initOrdersManager() {
             idInput.value = '';
         });
     }
+
+    const btnRefreshOrders = document.getElementById('btnRefreshOrders');
+    if (btnRefreshOrders) {
+        btnRefreshOrders.addEventListener('click', () => {
+            cuttingOrders = [];
+            renderOrdersTable();
+            const resultsSection = document.getElementById('resultsSection');
+            if (resultsSection) resultsSection.classList.add('d-none');
+        });
+    }
 }
 
 function renderOrdersTable() {
@@ -357,7 +367,19 @@ function renderResults(data) {
     if (kpiEfficiency) kpiEfficiency.textContent = `${(data.efficiency_score || 0).toFixed(1)}%`;
     if (kpiWaste) kpiWaste.textContent = `${(data.waste_percentage || 0).toFixed(1)}%`;
     if (kpiPlaced) kpiPlaced.textContent = `${data.placed_count || 0}/${data.requested_count || 0}`;
-    if (kpiUsedArea) kpiUsedArea.textContent = `${((data.total_area_used || 0) / 1000000).toFixed(2)} m²`;
+    const usedM2 = (data.total_area_used || 0) / 1000000;
+    if (kpiUsedArea) kpiUsedArea.textContent = `${usedM2.toFixed(2)} m²`;
+
+    // Cálculo de ahorro e impacto económico en $ USD
+    const priceInput = document.getElementById('pricePerM2');
+    const pricePerM2 = priceInput ? (parseFloat(priceInput.value) || 25.0) : 25.0;
+    const savedUsd = (usedM2 * pricePerM2).toFixed(2);
+    const totalSheetM2 = ((data.sheet_w || 2000) * (data.sheet_h || 2000)) / 1000000;
+    const totalSheetUsd = (totalSheetM2 * pricePerM2).toFixed(2);
+    const kpiEconomicUsd = document.getElementById('kpiEconomicUsd');
+    if (kpiEconomicUsd) {
+        kpiEconomicUsd.textContent = `$${savedUsd} USD recuperados (de $${totalSheetUsd} USD costo lámina a $${pricePerM2.toFixed(2)}/m²)`;
+    }
 
     // 3. Dibujar Plano de Corte 2D en el Canvas
     drawCuttingPlan(data.sheet_width, data.sheet_height, data.placed_pieces, data.defect_coords);
@@ -527,6 +549,21 @@ function initAuthAndTraceability() {
             if (navAdminTabItem) {
                 if (role === 'admin') navAdminTabItem.classList.remove('d-none');
                 else navAdminTabItem.classList.add('d-none');
+            }
+            const adminPriceCol = document.getElementById('adminPricePerM2Col');
+            const adminUsdBanner = document.getElementById('adminEconomicUsdBanner');
+            if (role === 'admin') {
+                if (adminPriceCol) adminPriceCol.classList.remove('d-none');
+                if (adminUsdBanner) {
+                    adminUsdBanner.classList.remove('d-none');
+                    adminUsdBanner.classList.add('d-flex');
+                }
+            } else {
+                if (adminPriceCol) adminPriceCol.classList.add('d-none');
+                if (adminUsdBanner) {
+                    adminUsdBanner.classList.add('d-none');
+                    adminUsdBanner.classList.remove('d-flex');
+                }
             }
             loadTraceabilityData();
         } else {
