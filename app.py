@@ -158,8 +158,54 @@ def api_register():
         role = 'admin'
 
     if db_manager.register_user(username, email, phone, password, role):
-        return jsonify({'success': True, 'message': f'Cuenta creada con éxito para {username}. Ya puedes iniciar sesión.'})
+        return jsonify({'success': True, 'message': f'¡Correo verificado y cuenta creada con éxito para {username}! Ya puedes iniciar sesión.'})
     return jsonify({'success': False, 'message': 'No se pudo registrar el usuario.'}), 500
+
+@app.route('/api/auth/forgot-send-code', methods=['POST'])
+def api_forgot_send_code():
+    """Genera un código de verificación de 6 dígitos para recuperar contraseña."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+
+    data = request.get_json(silent=True) or {}
+    identifier = (data.get('identifier') or '').strip()
+    if not identifier:
+        return jsonify({'success': False, 'message': 'Ingresa tu usuario o correo electrónico registrado.'}), 400
+
+    user = db_manager.get_user_for_recovery(identifier)
+    if not user:
+        return jsonify({'success': False, 'message': 'No existe ninguna cuenta registrada con ese usuario o correo.'}), 404
+
+    user_id, username, email = user
+    code = db_manager.create_password_reset_code(user_id)
+    return jsonify({
+        'success': True,
+        'user_id': user_id,
+        'username': username,
+        'email': email,
+        'code': code
+    })
+
+@app.route('/api/auth/forgot-reset', methods=['POST'])
+def api_forgot_reset():
+    """Verifica el código de 6 dígitos y actualiza la contraseña del usuario."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id')
+    code = (data.get('code') or '').strip()
+    new_password = (data.get('new_password') or '').strip()
+
+    if not user_id or not code or not new_password:
+        return jsonify({'success': False, 'message': 'Completa el código de 6 dígitos y la nueva contraseña.'}), 400
+    if len(new_password) < 8:
+        return jsonify({'success': False, 'message': 'La nueva contraseña debe tener mínimo 8 caracteres.'}), 400
+
+    ok, msg = db_manager.verify_and_reset_password(int(user_id), code, new_password)
+    if not ok:
+        return jsonify({'success': False, 'message': msg}), 400
+    return jsonify({'success': True, 'message': msg})
 
 @app.route('/api/auth/logout', methods=['POST'])
 def api_logout():
