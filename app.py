@@ -6,12 +6,17 @@ Proyecto de Tesis: Sistema Inteligente de Aprovechamiento de Material (SIAM)
 """
 
 import os
+import sys
+import shutil
 import json
 import time
 import logging
-from flask import Flask, render_template, request, jsonify, send_from_directory, make_response, session, redirect, url_for
-from werkzeug.utils import secure_filename
 
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if _BASE_DIR not in sys.path:
+    sys.path.insert(0, _BASE_DIR)
+
+from flask import Flask, render_template, request, jsonify, send_from_directory, make_response, session
 from vision import process_glass_sheet
 from src.database.db_manager import DatabaseManager
 
@@ -19,10 +24,37 @@ from src.database.db_manager import DatabaseManager
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
 logger = logging.getLogger('SIAM_FLASK')
 
+# Auto-sincronización: si el usuario sube index.html, base.html, app.js o sw.js a la raíz de GitHub,
+# copiarlos automáticamente a sus subcarpetas correspondientes (templates/ y static/) al arrancar.
+for _src_name, _dst_rel in [
+    ('index.html', os.path.join('templates', 'index.html')),
+    ('base.html', os.path.join('templates', 'base.html')),
+    ('app.js', os.path.join('static', 'js', 'app.js')),
+    ('sw.js', os.path.join('static', 'sw.js')),
+]:
+    _src_p = os.path.join(_BASE_DIR, _src_name)
+    _dst_p = os.path.join(_BASE_DIR, _dst_rel)
+    if os.path.exists(_src_p):
+        try:
+            os.makedirs(os.path.dirname(_dst_p), exist_ok=True)
+            shutil.copyfile(_src_p, _dst_p)
+            logger.info(f"Archivo sincronizado automáticamente desde raíz: {_src_name} -> {_dst_rel}")
+        except Exception as _e:
+            logger.warning(f"No se pudo sincronizar {_src_name}: {_e}")
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'siam_secret_villegas_2026')
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 # Permitir fotos de cámaras móviles de hasta 32 MB sin ser rechazadas por Flask
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
+
+@app.after_request
+def add_no_cache_headers(response):
+    """Evita que el navegador o el Service Worker guarden versiones antiguas del HTML/JS."""
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 # Extensiones de imagen permitidas
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'bmp'}
@@ -36,7 +68,8 @@ try:
     with db_manager._get_connection() as conn:
         c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM glass_batches")
-        if c.fetchone()[0] == 0:
+        row_count = c.fetchone()
+        if not row_count or row_count[0] == 0:
             db_manager.insert_batch("Proveedor Demo", 100, "Lote inicial de prueba")
     logger.info("Base de datos SQLite conectada correctamente para trazabilidad.")
 except Exception as e:
@@ -73,12 +106,116 @@ def offline():
 @app.route('/')
 def index():
     """Interfaz principal adaptada para móviles, tablets y estaciones de trabajo."""
-    return render_template(
+    html = render_template(
         'index.html',
         logged_user=session.get('username'),
         logged_role=session.get('role'),
         logged_user_id=session.get('user_id')
     )
+    # Garantizar etiquetas visibles, placeholders claros y botones de ojito (👁️)
+    # incluso si en GitHub no se reemplazó el archivo dentro de la subcarpeta templates/
+    enhancer_patch = """
+    <style>
+        #authOverlay input.form-control {
+            background-color: #161D2A !important;
+            color: #FFFFFF !important;
+            border: 1px solid #334155 !important;
+        }
+        #authOverlay input.form-control::placeholder {
+            color: #94A3B8 !important;
+            opacity: 1 !important;
+        }
+        .siam-auto-label {
+            display: block;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: #38BDF8;
+            margin-bottom: 3px;
+            text-align: left;
+        }
+        .btn-eye-siam {
+            background-color: #1E293B !important;
+            border: 1px solid #334155 !important;
+            color: #38BDF8 !important;
+            font-size: 15px !important;
+            padding: 0 12px !important;
+            cursor: pointer;
+        }
+        .btn-eye-siam:hover {
+            background-color: #0284C7 !important;
+            color: #FFFFFF !important;
+        }
+    </style>
+    <script>
+        window.togglePasswordVisibility = function(inputId, btn) {
+            var input = document.getElementById(inputId);
+            if (!input) return;
+            if (input.type === 'password') {
+                input.type = 'text';
+                if (btn) btn.textContent = '🙈';
+            } else {
+                input.type = 'password';
+                if (btn) btn.textContent = '👁️';
+            }
+        };
+        document.addEventListener('DOMContentLoaded', function() {
+            // Limpiar caches antiguas del Service Worker v1.0.0
+            if ('caches' in window) {
+                caches.keys().then(function(names) {
+                    names.forEach(function(n) {
+                        if (n.indexOf('v1.0.0') !== -1) caches.delete(n);
+                    });
+                });
+            }
+            // Asegurar etiquetas visibles encima de cada campo de Registro y Login
+            var fieldLabels = [
+                { id: 'regUsername', label: '👤 Nombre de Usuario:', placeholder: 'Ej: juanperez (mín. 3 caracteres)' },
+                { id: 'regEmail', label: '📧 Correo Electrónico:', placeholder: 'Ej: correo@gmail.com (con @)' },
+                { id: 'regPhone', label: '📱 Número de Teléfono:', placeholder: 'Ej: 04121234567 (solo números)' },
+                { id: 'regPassword', label: '🔒 Contraseña Segura:', placeholder: 'Mín. 8 caract., Mayús, Núm y Símbolo' },
+                { id: 'regAdminKey', label: '🔑 Clave Secreta de Administrador:', placeholder: 'Ingresa la clave especial SIAM' },
+                { id: 'loginAdminKey', label: '🔑 Clave Especial de Administrador:', placeholder: 'Ingresa la clave especial SIAM' }
+            ];
+            fieldLabels.forEach(function(item) {
+                var el = document.getElementById(item.id);
+                if (!el) return;
+                if (item.placeholder) el.setAttribute('placeholder', item.placeholder);
+                var container = el.closest('.mb-2, .mb-3, #loginAdminKeyWrapper, #regAdminKeyWrapper') || el.parentElement;
+                if (container && !container.querySelector('label')) {
+                    var lbl = document.createElement('label');
+                    lbl.className = 'siam-auto-label';
+                    lbl.setAttribute('for', item.id);
+                    lbl.textContent = item.label;
+                    container.insertBefore(lbl, container.firstChild);
+                }
+            });
+            // Asegurar botón de ojito (👁️) en todos los campos de contraseña y clave especial
+            ['loginPassword', 'loginAdminKey', 'regPassword', 'regAdminKey'].forEach(function(pwdId) {
+                var pwdEl = document.getElementById(pwdId);
+                if (!pwdEl) return;
+                if (pwdEl.parentElement && pwdEl.parentElement.classList.contains('input-group')) return;
+                var wrapper = document.createElement('div');
+                wrapper.className = 'input-group';
+                pwdEl.parentNode.insertBefore(wrapper, pwdEl);
+                wrapper.appendChild(pwdEl);
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'btn btn-eye-siam';
+                btn.title = 'Mostrar / Ocultar clave';
+                btn.textContent = '👁️';
+                btn.onclick = function() { window.togglePasswordVisibility(pwdId, btn); };
+                wrapper.appendChild(btn);
+            });
+        });
+    </script>
+    """
+    if "</body>" in html:
+        html = html.replace("</body>", enhancer_patch + "\n</body>")
+    else:
+        html += enhancer_patch
+    resp = make_response(html)
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    return resp
 
 @app.route('/api/auth/login', methods=['POST'])
 def api_login():
@@ -202,7 +339,7 @@ def api_forgot_reset():
     if len(new_password) < 8:
         return jsonify({'success': False, 'message': 'La nueva contraseña debe tener mínimo 8 caracteres.'}), 400
 
-    ok, msg = db_manager.verify_and_reset_password(int(user_id), code, new_password)
+    ok, msg = db_manager.complete_password_reset(int(user_id), code, new_password)
     if not ok:
         return jsonify({'success': False, 'message': msg}), 400
     return jsonify({'success': True, 'message': msg})
@@ -293,13 +430,14 @@ def scan_and_optimize():
             }), 400
 
         file = request.files['image']
-        if file.filename == '':
+        filename = file.filename or ''
+        if filename == '':
             return jsonify({
                 'success': False, 
                 'message': 'No se seleccionó ningún archivo de imagen.'
             }), 400
 
-        if not allowed_file(file.filename):
+        if not allowed_file(filename):
             return jsonify({
                 'success': False, 
                 'message': 'Formato no soportado. Use imágenes JPG, PNG o WEBP.'
@@ -355,15 +493,17 @@ def scan_and_optimize():
                 for ord_item in orders:
                     db_manager.insert_cutting_order(ord_item.get('id', 'Pieza'), ord_item.get('w', 500), ord_item.get('h', 400), 'PROCESADO')
                 if result.get('defect_detected'):
-                    def_coords = result.get('defect_coords', {})
+                    def_coords = result.get('defect_coords')
+                    x_val = float(def_coords['x']) if isinstance(def_coords, dict) and 'x' in def_coords else 0.0
+                    y_val = float(def_coords['y']) if isinstance(def_coords, dict) and 'y' in def_coords else 0.0
                     db_manager.insert_defect(
                         batch_id=1,
-                        defect_type=result.get('defect_type', 'Desconocido'),
-                        x_coord=float(def_coords.get('x', 0)),
-                        y_coord=float(def_coords.get('y', 0)),
-                        defect_area=float(result.get('defect_area', 0)),
-                        qc_status=result.get('qc_status', 'PENDIENTE'),
-                        severity=result.get('severity', 'LEVE')
+                        defect_type=str(result.get('defect_type') or 'Desconocido'),
+                        x_coord=x_val,
+                        y_coord=y_val,
+                        defect_area=float(result.get('defect_area') or 0.0),
+                        qc_status=str(result.get('qc_status') or 'PENDIENTE'),
+                        severity=str(result.get('severity') or 'LEVE')
                     )
                 db_manager.insert_cutting_plan(
                     batch_id=1,
