@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initCameraAndUpload();
     initOrdersManager();
     initFormSubmission();
+    initAuthAndTraceability();
 });
 
 /* ==========================================================================
@@ -328,7 +329,18 @@ function renderResults(data) {
     if (defectTypeEl) defectTypeEl.textContent = data.defect_type || 'Ninguno';
     if (defectConfidenceEl) defectConfidenceEl.textContent = `${(data.confidence || 0).toFixed(1)}%`;
     if (defectAreaEl) defectAreaEl.textContent = `${(data.defect_area || 0).toFixed(1)} mm²`;
+    const sevEl = document.getElementById('resultSeverity');
+    if (sevEl) sevEl.textContent = data.severity || 'NINGUNA';
     if (qcRecommendationEl) qcRecommendationEl.textContent = data.recommendation || 'Sin observaciones.';
+    const badgeTime = document.getElementById('badgeProcessTime');
+    if (badgeTime && data.processing_time_sec !== undefined) {
+        badgeTime.textContent = `Algoritmo FFD (${data.processing_time_sec}s < 5s RNF)`;
+    }
+
+    // Refrescar tablas de trazabilidad después de procesar
+    if (typeof loadTraceabilityData === 'function') {
+        loadTraceabilityData();
+    }
 
     // Imagen anotada por OpenCV (si viene en base64)
     if (annotatedImg && data.annotated_image_url) {
@@ -455,3 +467,236 @@ function drawCuttingPlan(sheetW, sheetH, placedPieces, defectCoords) {
     ctx.lineWidth = 3;
     ctx.strokeRect(0, 0, canvasWidth, canvasHeight);
 }
+
+/* ==========================================================================
+   8. AUTENTICACIÓN POR ROLES (CLAVE ESPECIAL ADMIN) Y TRAZABILIDAD BD
+   ========================================================================== */
+function initAuthAndTraceability() {
+    const root = document.getElementById('siamAppRoot');
+    const authOverlay = document.getElementById('authOverlay');
+    const loginAdminCheck = document.getElementById('loginAdminCheck');
+    const loginAdminKeyWrapper = document.getElementById('loginAdminKeyWrapper');
+    const regAdminCheck = document.getElementById('regAdminCheck');
+    const regAdminKeyWrapper = document.getElementById('regAdminKeyWrapper');
+    const btnShowRegister = document.getElementById('btnShowRegister');
+    const btnBackToLogin = document.getElementById('btnBackToLogin');
+    const loginBox = document.getElementById('loginBox');
+    const registerBox = document.getElementById('registerBox');
+    const authAlert = document.getElementById('authAlert');
+    const btnDoLogin = document.getElementById('btnDoLogin');
+    const btnDoRegister = document.getElementById('btnDoRegister');
+    const btnLogout = document.getElementById('btnLogout');
+    const navUserBadge = document.getElementById('navUserBadge');
+    const navAdminTabItem = document.getElementById('navAdminTabItem');
+
+    function showAlert(msg, isSuccess = false) {
+        if (!authAlert) return;
+        authAlert.textContent = msg;
+        authAlert.className = `alert py-2 small ${isSuccess ? 'alert-success' : 'alert-danger'}`;
+    }
+
+    function updateHeaderSession(username, role) {
+        if (username) {
+            if (authOverlay) {
+                authOverlay.classList.add('d-none');
+                authOverlay.classList.remove('d-flex');
+            }
+            if (navUserBadge) {
+                navUserBadge.textContent = `👤 ${username} (${(role || 'usuario').toUpperCase()})`;
+                navUserBadge.classList.remove('d-none');
+            }
+            if (btnLogout) btnLogout.classList.remove('d-none');
+            if (navAdminTabItem) {
+                if (role === 'admin') navAdminTabItem.classList.remove('d-none');
+                else navAdminTabItem.classList.add('d-none');
+            }
+            loadTraceabilityData();
+        } else {
+            if (authOverlay) {
+                authOverlay.classList.remove('d-none');
+                authOverlay.classList.add('d-flex');
+            }
+            if (navUserBadge) navUserBadge.classList.add('d-none');
+            if (btnLogout) btnLogout.classList.add('d-none');
+            if (navAdminTabItem) navAdminTabItem.classList.add('d-none');
+        }
+    }
+
+    if (root && root.dataset.user) {
+        updateHeaderSession(root.dataset.user, root.dataset.role);
+    }
+
+    if (loginAdminCheck && loginAdminKeyWrapper) {
+        loginAdminCheck.addEventListener('change', () => {
+            loginAdminKeyWrapper.classList.toggle('d-none', !loginAdminCheck.checked);
+            if (!loginAdminCheck.checked) document.getElementById('loginAdminKey').value = '';
+        });
+    }
+
+    if (regAdminCheck && regAdminKeyWrapper) {
+        regAdminCheck.addEventListener('change', () => {
+            regAdminKeyWrapper.classList.toggle('d-none', !regAdminCheck.checked);
+        });
+    }
+
+    if (btnShowRegister) {
+        btnShowRegister.addEventListener('click', () => {
+            loginBox.classList.add('d-none');
+            registerBox.classList.remove('d-none');
+            if (authAlert) authAlert.classList.add('d-none');
+        });
+    }
+
+    if (btnBackToLogin) {
+        btnBackToLogin.addEventListener('click', () => {
+            registerBox.classList.add('d-none');
+            loginBox.classList.remove('d-none');
+            if (authAlert) authAlert.classList.add('d-none');
+        });
+    }
+
+    if (btnDoLogin) {
+        btnDoLogin.addEventListener('click', async () => {
+            const identifier = document.getElementById('loginIdentifier')?.value || '';
+            const password = document.getElementById('loginPassword')?.value || '';
+            const wants_admin = document.getElementById('loginAdminCheck')?.checked || false;
+            const admin_key = document.getElementById('loginAdminKey')?.value || '';
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ identifier, password, wants_admin, admin_key })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    showAlert(data.message || 'Error al iniciar sesión.');
+                    return;
+                }
+                updateHeaderSession(data.username, data.role);
+            } catch (e) {
+                showAlert('Error de conexión con el servidor.');
+            }
+        });
+    }
+
+    if (btnDoRegister) {
+        btnDoRegister.addEventListener('click', async () => {
+            const username = document.getElementById('regUsername')?.value || '';
+            const email = document.getElementById('regEmail')?.value || '';
+            const phone = document.getElementById('regPhone')?.value || '';
+            const password = document.getElementById('regPassword')?.value || '';
+            const wants_admin = document.getElementById('regAdminCheck')?.checked || false;
+            const admin_key = document.getElementById('regAdminKey')?.value || '';
+
+            try {
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, phone, password, wants_admin, admin_key })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    showAlert(data.message || 'Error al registrar.');
+                    return;
+                }
+                showAlert(data.message, true);
+                registerBox.classList.add('d-none');
+                loginBox.classList.remove('d-none');
+            } catch (e) {
+                showAlert('Error al registrar usuario.');
+            }
+        });
+    }
+
+    if (btnLogout) {
+        btnLogout.addEventListener('click', async () => {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.reload();
+        });
+    }
+
+    const btnRefreshTrace = document.getElementById('btnRefreshTraceability');
+    if (btnRefreshTrace) btnRefreshTrace.addEventListener('click', loadTraceabilityData);
+
+    const btnRefreshAdmin = document.getElementById('btnRefreshAdmin');
+    if (btnRefreshAdmin) btnRefreshAdmin.addEventListener('click', loadTraceabilityData);
+}
+
+window.loadTraceabilityData = async function() {
+    try {
+        const res = await fetch('/api/traceability-data');
+        const data = await res.json();
+        if (!data.success) return;
+
+        // 1. Actualizar KPIs de Trazabilidad
+        const elTot = document.getElementById('statTotalDefects');
+        const elAvg = document.getElementById('statAvgArea');
+        const elMax = document.getElementById('statMaxArea');
+        if (elTot) elTot.textContent = data.summary.total_defects;
+        if (elAvg) elAvg.textContent = `${data.summary.avg_area} mm²`;
+        if (elMax) elMax.textContent = `${data.summary.max_area} mm²`;
+
+        // 2. Poblar tabla de inspecciones
+        const tbody = document.getElementById('traceabilityTableBody');
+        if (tbody) {
+            tbody.innerHTML = (data.inspections || []).map(r => {
+                const badgeClass = r.qc_status.includes('APROBADO') ? 'bg-success' : (r.qc_status.includes('RECHAZADO') ? 'bg-danger' : 'bg-warning text-dark');
+                return `
+                    <tr>
+                        <td class="fw-bold">D-${r.id}</td>
+                        <td>Lote #${r.batch_id}</td>
+                        <td>${r.defect_type}</td>
+                        <td>(${r.x}, ${r.y})</td>
+                        <td>${r.area} mm²</td>
+                        <td><span class="badge ${badgeClass}">${r.qc_status}</span></td>
+                        <td>${r.severity}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // 3. Poblar tablas del Panel Administrador (si aplica)
+        if (data.admin_data) {
+            const uBody = document.getElementById('adminUsersTableBody');
+            if (uBody) {
+                uBody.innerHTML = data.admin_data.users.map(u => `
+                    <tr>
+                        <td>${u.id}</td>
+                        <td class="fw-bold">${u.username}</td>
+                        <td>${u.email}</td>
+                        <td>${u.phone}</td>
+                        <td><span class="badge ${u.role === 'ADMIN' ? 'bg-info text-dark' : 'bg-secondary'}">${u.role}</span></td>
+                    </tr>
+                `).join('');
+            }
+
+            const aBody = document.getElementById('adminActivityTableBody');
+            if (aBody) {
+                aBody.innerHTML = data.admin_data.activity.map(a => `
+                    <tr>
+                        <td class="fw-bold">${a.username}</td>
+                        <td>${a.role}</td>
+                        <td>${a.action}</td>
+                        <td>${a.details}</td>
+                        <td class="text-muted">${a.timestamp}</td>
+                    </tr>
+                `).join('');
+            }
+
+            const mBody = document.getElementById('adminMetricsTableBody');
+            if (mBody) {
+                mBody.innerHTML = data.admin_data.metrics.map(m => `
+                    <tr>
+                        <td class="fw-bold">${m.username}</td>
+                        <td>${m.role}</td>
+                        <td>${m.action}</td>
+                        <td class="fw-bold text-primary">${m.total}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+    } catch (err) {
+        console.error('Error cargando trazabilidad:', err);
+    }
+};

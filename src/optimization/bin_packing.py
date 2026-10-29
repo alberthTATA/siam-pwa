@@ -23,10 +23,11 @@ class GlassSheet:
         Marca un área rectangular de la lámina (Bounding Box de la falla) 
         como zona prohibida para el corte.
         """
-        r_start = int(y / self.resolution)
-        r_end = int((y + h) / self.resolution)
-        c_start = int(x / self.resolution)
-        c_end = int((x + w) / self.resolution)
+        rows, cols = self.grid.shape
+        r_start = max(0, min(rows - 1, int(y / self.resolution)))
+        r_end = max(r_start + 1, min(rows, int(np.ceil((y + h) / self.resolution))))
+        c_start = max(0, min(cols - 1, int(x / self.resolution)))
+        c_end = max(c_start + 1, min(cols, int(np.ceil((x + w) / self.resolution))))
         
         # Bloqueamos esa zona marcándola con 1
         self.grid[r_start:r_end, c_start:c_end] = 1

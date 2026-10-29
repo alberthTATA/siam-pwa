@@ -11,13 +11,16 @@ class DatabaseManager:
     # Clave maestra secreta para registrarse como Administrador
     ADMIN_SECRET_KEY = "SIAM2026"
     
-    def __init__(self, db_name="siam_traceability.db"):
+    def __init__(self, db_name=None):
+        if db_name is None:
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            db_name = os.path.join(base_dir, "siam_traceability.db")
         self.db_name = db_name
         self._initialize_db()
         
     def _get_connection(self):
-        """Retorna una conexión activa a la base de datos local."""
-        return sqlite3.connect(self.db_name)
+        """Retorna una conexión activa a la base de datos local con timeout para evitar bloqueos."""
+        return sqlite3.connect(self.db_name, timeout=10)
         
     def _initialize_db(self):
         """Crea las tablas relacionales necesarias si no existen (Patrón de migración inicial)."""
@@ -134,6 +137,18 @@ class DatabaseManager:
                     FOREIGN KEY (user_id) REFERENCES users(id)
                 )
             ''')
+
+            # Tabla 8: Pedidos de Corte Solicitados (Trazabilidad de Órdenes de Clientes)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cutting_orders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_code TEXT NOT NULL,
+                    width_mm INTEGER NOT NULL,
+                    height_mm INTEGER NOT NULL,
+                    status TEXT DEFAULT 'PENDIENTE',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             conn.commit()
 
     # --- Operaciones CRUD y Autenticación ---
@@ -202,17 +217,40 @@ class DatabaseManager:
                 locked_time = datetime.strptime(locked_until, '%Y-%m-%d %H:%M:%S')
                 if locked_time > datetime.now():
                     # Cuenta bloqueada
-                    self.log_activity(user_id, "LOGIN_BLOCKED", f"Cuenta bloqueada hasta {locked_until}")
+                    cursor.execute(
+                        "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                        (user_id, "LOGIN_BLOCKED", f"Cuenta bloqueada hasta {locked_until}")
+                    )
+                    conn.commit()
                     return "account_locked"
             
-            # Verificar contraseña con bcrypt
-            if bcrypt.checkpw(password.encode(), stored_hash.encode('utf-8')):
+            # Verificar contraseña con bcrypt (con soporte de migración para SHA-256)
+            import hashlib
+            password_ok = False
+            try:
+                if stored_hash.startswith(('$2b$', '$2a$', '$2y$')):
+                    password_ok = bcrypt.checkpw(password.encode(), stored_hash.encode('utf-8'))
+                else:
+                    # Respaldo para cuentas creadas con SHA-256 (como alberth19)
+                    sha256_hash = hashlib.sha256(password.encode()).hexdigest()
+                    if sha256_hash == stored_hash:
+                        password_ok = True
+                        # Actualizar automáticamente el hash a bcrypt
+                        new_bcrypt_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode('utf-8')
+                        cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_bcrypt_hash, user_id))
+            except Exception:
+                password_ok = False
+
+            if password_ok:
                 # Login exitoso - resetear intentos fallidos
                 cursor.execute(
                     "UPDATE users SET failed_login_attempts = 0, account_locked_until = NULL WHERE id = ?",
                     (user_id,)
                 )
-                self.log_activity(user_id, "LOGIN_SUCCESS", "Autenticación exitosa")
+                cursor.execute(
+                    "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                    (user_id, "LOGIN_SUCCESS", "Autenticación exitosa")
+                )
                 conn.commit()
                 return (user_id, username, role)
             else:
@@ -221,7 +259,10 @@ class DatabaseManager:
                     "UPDATE users SET failed_login_attempts = failed_login_attempts + 1 WHERE id = ?",
                     (user_id,)
                 )
-                self.log_activity(user_id, "LOGIN_FAILED", f"Intento fallido #{failed_attempts + 1}")
+                cursor.execute(
+                    "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                    (user_id, "LOGIN_FAILED", f"Intento fallido #{failed_attempts + 1}")
+                )
                 conn.commit()
                 return None
 
@@ -233,6 +274,7 @@ class DatabaseManager:
                 "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
                 (user_id, action, details)
             )
+            conn.commit()
 
     def change_password(self, user_id, old_password, new_password):
         """Cambia la contraseña de un usuario verificando la antigua."""
@@ -280,7 +322,10 @@ class DatabaseManager:
                 (user_id,)
             )
             
-            self.log_activity(user_id, "PASSWORD_CHANGE", "Contraseña cambiada exitosamente")
+            cursor.execute(
+                "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                (user_id, "PASSWORD_CHANGE", "Contraseña cambiada exitosamente")
+            )
             conn.commit()
             return True
 
@@ -400,7 +445,10 @@ class DatabaseManager:
                 "UPDATE users SET account_locked_until = NULL, failed_login_attempts = 0 WHERE id = ?",
                 (user_id,)
             )
-            self.log_activity(user_id, "ACCOUNT_UNLOCKED", "Cuenta desbloqueada por administrador")
+            cursor.execute(
+                "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                (user_id, "ACCOUNT_UNLOCKED", "Cuenta desbloqueada por administrador")
+            )
             conn.commit()
             return True
 
@@ -489,7 +537,26 @@ class DatabaseManager:
                 "INSERT INTO cutting_plans (batch_id, total_area_used, waste_area, efficiency_score) VALUES (?, ?, ?, ?)",
                 (batch_id, total_area_used, waste_area, efficiency_score)
             )
+            conn.commit()
             return cursor.lastrowid
+
+    def insert_cutting_order(self, order_code, width_mm, height_mm, status='PENDIENTE'):
+        """Registra un pedido de corte en la tabla relacional cutting_orders."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO cutting_orders (order_code, width_mm, height_mm, status) VALUES (?, ?, ?, ?)",
+                (order_code, int(width_mm), int(height_mm), status)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_cutting_orders(self):
+        """Retorna todos los pedidos de corte registrados."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, order_code, width_mm, height_mm, status, created_at FROM cutting_orders ORDER BY id DESC")
+            return cursor.fetchall()
 
     # --- Métodos para Dashboard Gráfico de Defectos ---
     

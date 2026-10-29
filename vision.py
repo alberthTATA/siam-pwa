@@ -156,8 +156,15 @@ def process_glass_sheet(image_input, sheet_width=2000, sheet_height=2000, orders
     image = optimize_image_memory(image, max_dim=1600)
     img_h, img_w = image.shape[:2]
 
-    # 2. Detección de fallas con Canny
+    # 2. Detección de fallas con Canny y Validación Óptica de Lámina de Vidrio
     detector = DefectDetector(blur_ksize=(5, 5), canny_thresh1=50, canny_thresh2=150)
+    is_valid_glass, glass_reason, _ = detector.validate_glass_sheet(image)
+    if not is_valid_glass:
+        return {
+            'success': False,
+            'invalid_glass': True,
+            'message': f"CAPTURA RECHAZADA POR PARÁMETROS ÓPTICOS: {glass_reason}"
+        }
     
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, detector.blur_ksize, 0)
