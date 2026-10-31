@@ -206,6 +206,43 @@ def index():
                 btn.onclick = function() { window.togglePasswordVisibility(pwdId, btn); };
                 wrapper.appendChild(btn);
             });
+            // Garantizar que el botón Completar Registro guarde directamente en la BD en 1 clic sin pedir correo de verificación
+            var oldRegBtn = document.getElementById('btnDoRegister');
+            if (oldRegBtn) {
+                var newRegBtn = oldRegBtn.cloneNode(true);
+                oldRegBtn.parentNode.replaceChild(newRegBtn, oldRegBtn);
+                newRegBtn.addEventListener('click', async function() {
+                    var username = (document.getElementById('regUsername')?.value || '').trim();
+                    var email = (document.getElementById('regEmail')?.value || '').trim();
+                    var phone = (document.getElementById('regPhone')?.value || '').trim();
+                    var password = (document.getElementById('regPassword')?.value || '').trim();
+                    var wants_admin = document.getElementById('regAdminCheck')?.checked || false;
+                    var admin_key = (document.getElementById('regAdminKey')?.value || '').trim();
+                    var authAlert = document.getElementById('authAlert');
+                    function showMsg(msg, ok) {
+                        if (!authAlert) return;
+                        authAlert.textContent = msg;
+                        authAlert.className = 'alert py-2 small ' + (ok ? 'alert-success' : 'alert-danger');
+                    }
+                    try {
+                        var res = await fetch('/api/auth/register', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username: username, email: email, phone: phone, password: password, wants_admin: wants_admin, admin_key: admin_key })
+                        });
+                        var data = await res.json();
+                        if (!res.ok || !data.success) {
+                            showMsg(data.message || 'Error al registrar.', false);
+                            return;
+                        }
+                        showMsg(data.message || '¡Cuenta creada con éxito! Ya puedes iniciar sesión.', true);
+                        document.getElementById('registerBox')?.classList.add('d-none');
+                        document.getElementById('loginBox')?.classList.remove('d-none');
+                    } catch (e) {
+                        showMsg('Error de conexión al registrar usuario.', false);
+                    }
+                });
+            }
         });
     </script>
     """
