@@ -13,11 +13,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3. Monitor de Conexion Online / Offline
     initNetworkMonitor();
 
-    // 4. Inicializar Gestor de Camara y Pedidos
+    // 4. Inicializar Gestor de Camara, Lamina, Pedidos y Menus Desplegables
     initCameraAndUpload();
     initOrdersManager();
     initFormSubmission();
     initAuthAndTraceability();
+    initModuleAndFunctionMenus();
 });
 
 /* ==========================================================================
@@ -28,10 +29,10 @@ function registerServiceWorker() {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('/sw.js', { scope: '/' })
                 .then((registration) => {
-                    console.log('✅ [PWA] Service Worker registrado con éxito en el alcance:', registration.scope);
+                    console.log('[PWA] Service Worker registrado con exito en el alcance:', registration.scope);
                 })
                 .catch((error) => {
-                    console.error('❌ [PWA] Error al registrar el Service Worker:', error);
+                    console.error('[PWA] Error al registrar el Service Worker:', error);
                 });
         });
     }
@@ -47,11 +48,8 @@ function initPwaInstall() {
     const dismissBtn = document.getElementById('btnDismissInstall');
 
     window.addEventListener('beforeinstallprompt', (e) => {
-        // Prevenir la barra de instalacion por defecto del navegador
         e.preventDefault();
         deferredPrompt = e;
-        
-        // Mostrar banner personalizado para el operario
         if (installBanner) {
             installBanner.style.display = 'flex';
         }
@@ -75,7 +73,7 @@ function initPwaInstall() {
     }
 
     window.addEventListener('appinstalled', () => {
-        console.log('🎉 [PWA] SIAM fue instalada satisfactoriamente en el dispositivo');
+        console.log('[PWA] SIAM fue instalada satisfactoriamente en el dispositivo');
         if (installBanner) installBanner.style.display = 'none';
     });
 }
@@ -109,7 +107,6 @@ function initCameraAndUpload() {
     const galleryInput = document.getElementById('galleryInput');
     const btnTriggerCamera = document.getElementById('btnTriggerCamera');
     const btnTriggerGallery = document.getElementById('btnTriggerGallery');
-    const previewContainer = document.getElementById('previewContainer');
     const previewImage = document.getElementById('previewImage');
     const previewPlaceholder = document.getElementById('previewPlaceholder');
     const fileInfoText = document.getElementById('fileInfoText');
@@ -131,14 +128,12 @@ function initCameraAndUpload() {
         if (!file) return;
         selectedFile = file;
 
-        // Mostrar previsualización
         const reader = new FileReader();
         reader.onload = (e) => {
             previewImage.src = e.target.result;
             previewImage.classList.remove('d-none');
             previewPlaceholder.classList.add('d-none');
             
-            // Info de archivo
             const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
             fileInfoText.innerHTML = `<strong>Captura lista:</strong> ${file.name} (${sizeMb} MB)`;
             fileInfoText.classList.remove('text-muted');
@@ -169,20 +164,89 @@ function initCameraAndUpload() {
 }
 
 /* ==========================================================================
-   5. GESTOR DE PEDIDOS DE CORTE (Lista interactiva)
+   5. VALIDACIÓN DE LÁMINA MADRE Y PEDIDOS DE CORTE
    ========================================================================== */
-let cuttingOrders = [
-    { id: 'Corte-A1', w: 600, h: 500 },
-    { id: 'Corte-A2', w: 500, h: 400 },
-    { id: 'Corte-B1', w: 700, h: 450 }
-];
+let sheetConfigured = false;
+let configuredSheetW = 0;
+let configuredSheetH = 0;
+let cuttingOrders = [];
+
+window.confirmSheetSize = async function() {
+    const wInput = document.getElementById('sheetWidth');
+    const hInput = document.getElementById('sheetHeight');
+
+    const w = parseInt(wInput?.value || '0', 10);
+    const h = parseInt(hInput?.value || '0', 10);
+
+    if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
+        alert('Error de Tamaño de Lámina: Ingrese valores numéricos mayores a cero para el Ancho y Alto de la lámina.');
+        return false;
+    }
+
+    try {
+        const res = await fetch('/api/validate-sheet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sheet_width: w, sheet_height: h })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            sheetConfigured = false;
+            alert(data.message || 'Dimensiones de lámina fuera del rango permitido.');
+            return false;
+        }
+
+        sheetConfigured = true;
+        configuredSheetW = w;
+        configuredSheetH = h;
+
+        // Verificar si había piezas previas que excedan el nuevo tamaño de lámina
+        const invalidPrev = cuttingOrders.filter(o => o.w > configuredSheetW || o.h > configuredSheetH);
+        if (invalidPrev.length > 0) {
+            cuttingOrders = cuttingOrders.filter(o => o.w <= configuredSheetW && o.h <= configuredSheetH);
+            renderOrdersTable();
+            alert(`Se removieron ${invalidPrev.length} pieza(s) previas cuyas medidas superaban el nuevo tamaño de lámina (${configuredSheetW}x${configuredSheetH}).`);
+        }
+
+        alert(data.message || `Lámina Madre configurada en ${w} x ${h}. Ahora puede ingresar las medidas de los cortes.`);
+        return true;
+    } catch (err) {
+        alert('Error al validar el tamaño de la lámina en el servidor.');
+        return false;
+    }
+};
 
 function initOrdersManager() {
     renderOrdersTable();
 
+    const btnConfirmSheet = document.getElementById('btnConfirmSheetSize');
+    if (btnConfirmSheet) {
+        btnConfirmSheet.addEventListener('click', () => {
+            window.confirmSheetSize();
+        });
+    }
+
+    const sheetWInput = document.getElementById('sheetWidth');
+    const sheetHInput = document.getElementById('sheetHeight');
+    const markSheetUnconfirmed = () => {
+        const w = parseInt(sheetWInput?.value || '0', 10);
+        const h = parseInt(sheetHInput?.value || '0', 10);
+        if (w !== configuredSheetW || h !== configuredSheetH) {
+            sheetConfigured = false;
+        }
+    };
+    if (sheetWInput) sheetWInput.addEventListener('input', markSheetUnconfirmed);
+    if (sheetHInput) sheetHInput.addEventListener('input', markSheetUnconfirmed);
+
     const btnAddOrder = document.getElementById('btnAddOrder');
     if (btnAddOrder) {
         btnAddOrder.addEventListener('click', () => {
+            // Exigir primero definir y validar el tamaño de la lámina madre
+            if (!sheetConfigured || configuredSheetW <= 0 || configuredSheetH <= 0) {
+                alert('ERROR: Primero debe definir y fijar el Tamaño de la Lámina Madre (Paso 1: botón "1. Validar y Fijar Tamaño de Lámina Madre") antes de ingresar las medidas de los cortes.');
+                return;
+            }
+
             const wInput = document.getElementById('orderWidth');
             const hInput = document.getElementById('orderHeight');
             const idInput = document.getElementById('orderId');
@@ -192,16 +256,19 @@ function initOrdersManager() {
             const id = idInput.value.trim() || `Corte-${cuttingOrders.length + 1}`;
 
             if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
-                alert('Por favor ingrese dimensiones válidas en milímetros (mm).');
+                alert('Error de Medida: Las medidas de corte (Ancho y Alto) deben ser mayores a cero.');
+                return;
+            }
+
+            // Validar que la medida del corte no supere la lámina madre
+            if (w > configuredSheetW || h > configuredSheetH) {
+                alert(`ERROR DE MEDIDA DE CORTE: La pieza solicitada (${w} x ${h}) excede las dimensiones de la Lámina Madre configurada (${configuredSheetW} x ${configuredSheetH}). Ingrese una medida que quepa dentro de la lámina.`);
                 return;
             }
 
             cuttingOrders.push({ id, w, h });
             renderOrdersTable();
 
-            // Limpiar inputs
-            wInput.value = '500';
-            hInput.value = '400';
             idInput.value = '';
         });
     }
@@ -210,6 +277,9 @@ function initOrdersManager() {
     if (btnRefreshOrders) {
         btnRefreshOrders.addEventListener('click', () => {
             cuttingOrders = [];
+            sheetConfigured = false;
+            configuredSheetW = 0;
+            configuredSheetH = 0;
             renderOrdersTable();
             const resultsSection = document.getElementById('resultsSection');
             if (resultsSection) resultsSection.classList.add('d-none');
@@ -222,18 +292,18 @@ function renderOrdersTable() {
     if (!tableBody) return;
 
     if (cuttingOrders.length === 0) {
-        tableBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-2">Sin pedidos agregados.</td></tr>`;
+        tableBody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-2">Sin pedidos agregados. Primero valide el tamaño de la Lámina Madre y luego agregue las piezas.</td></tr>`;
         return;
     }
 
     tableBody.innerHTML = cuttingOrders.map((order, idx) => `
         <tr>
             <td class="fw-bold text-primary">${order.id}</td>
-            <td>${order.w} mm</td>
-            <td>${order.h} mm</td>
+            <td>${order.w}</td>
+            <td>${order.h}</td>
             <td class="text-end">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeOrder(${idx})">
-                    <i class="bi bi-trash"></i>
+                    Eliminar
                 </button>
             </td>
         </tr>
@@ -263,23 +333,23 @@ function initFormSubmission() {
             return;
         }
 
-        if (cuttingOrders.length === 0) {
-            alert('Agregue al menos un pedido de corte a la lista.');
+        if (!sheetConfigured || configuredSheetW <= 0 || configuredSheetH <= 0) {
+            alert('ERROR: Primero debe validar y fijar el Tamaño de la Lámina Madre (Paso 1) antes de optimizar los cortes.');
             return;
         }
 
-        // Mostrar spinner de procesamiento en móvil
+        if (cuttingOrders.length === 0) {
+            alert('Agregue al menos un pedido de corte válido a la lista.');
+            return;
+        }
+
         if (loadingOverlay) loadingOverlay.style.display = 'flex';
 
         const formData = new FormData();
         formData.append('image', selectedFile);
         formData.append('orders', JSON.stringify(cuttingOrders));
-        
-        // Dimensiones de la lámina madre
-        const sheetWidth = document.getElementById('sheetWidth')?.value || 2000;
-        const sheetHeight = document.getElementById('sheetHeight')?.value || 2000;
-        formData.append('sheet_width', sheetWidth);
-        formData.append('sheet_height', sheetHeight);
+        formData.append('sheet_width', configuredSheetW);
+        formData.append('sheet_height', configuredSheetH);
 
         try {
             const response = await fetch('/api/scan-and-optimize', {
@@ -293,10 +363,8 @@ function initFormSubmission() {
                 throw new Error(data.message || 'Error durante el procesamiento en el servidor.');
             }
 
-            // Renderizar resultados
             renderResults(data);
 
-            // Mostrar seccion de resultados y hacer scroll suave
             if (resultsSection) {
                 resultsSection.classList.remove('d-none');
                 resultsSection.scrollIntoView({ behavior: 'smooth' });
@@ -314,7 +382,6 @@ function initFormSubmission() {
    7. RENDERIZADO DE RESULTADOS & PLANO DE CORTE 2D
    ========================================================================== */
 function renderResults(data) {
-    // 1. Datos de Control de Calidad y Defectos
     const qcBadge = document.getElementById('resultQcBadge');
     const defectTypeEl = document.getElementById('resultDefectType');
     const defectConfidenceEl = document.getElementById('resultConfidence');
@@ -326,13 +393,13 @@ function renderResults(data) {
         qcBadge.className = 'qc-badge';
         if (data.qc_status === 'APROBADO') {
             qcBadge.classList.add('qc-aprobado');
-            qcBadge.innerHTML = `<i class="bi bi-check-circle-fill"></i> ESTADO: ${data.qc_status}`;
+            qcBadge.textContent = `ESTADO: ${data.qc_status}`;
         } else if (data.qc_status === 'APROBADO CON CONDICIÓN') {
             qcBadge.classList.add('qc-condicion');
-            qcBadge.innerHTML = `<i class="bi bi-exclamation-triangle-fill"></i> ESTADO: ${data.qc_status}`;
+            qcBadge.textContent = `ESTADO: ${data.qc_status}`;
         } else {
             qcBadge.classList.add('qc-rechazado');
-            qcBadge.innerHTML = `<i class="bi bi-x-circle-fill"></i> ESTADO: ${data.qc_status}`;
+            qcBadge.textContent = `ESTADO: ${data.qc_status}`;
         }
     }
 
@@ -347,18 +414,15 @@ function renderResults(data) {
         badgeTime.textContent = `Algoritmo FFD (${data.processing_time_sec}s < 5s RNF)`;
     }
 
-    // Refrescar tablas de trazabilidad después de procesar
     if (typeof loadTraceabilityData === 'function') {
         loadTraceabilityData();
     }
 
-    // Imagen anotada por OpenCV (si viene en base64)
     if (annotatedImg && data.annotated_image_url) {
         annotatedImg.src = data.annotated_image_url;
         annotatedImg.classList.remove('d-none');
     }
 
-    // 2. Metricas de Rendimiento / Merma
     const kpiEfficiency = document.getElementById('kpiEfficiency');
     const kpiWaste = document.getElementById('kpiWaste');
     const kpiPlaced = document.getElementById('kpiPlaced');
@@ -370,18 +434,16 @@ function renderResults(data) {
     const usedM2 = (data.total_area_used || 0) / 1000000;
     if (kpiUsedArea) kpiUsedArea.textContent = `${usedM2.toFixed(2)} m²`;
 
-    // Cálculo de ahorro e impacto económico en $ USD
     const priceInput = document.getElementById('pricePerM2');
     const pricePerM2 = priceInput ? (parseFloat(priceInput.value) || 25.0) : 25.0;
     const savedUsd = (usedM2 * pricePerM2).toFixed(2);
-    const totalSheetM2 = ((data.sheet_w || 2000) * (data.sheet_h || 2000)) / 1000000;
+    const totalSheetM2 = ((data.sheet_width || 2000) * (data.sheet_height || 2000)) / 1000000;
     const totalSheetUsd = (totalSheetM2 * pricePerM2).toFixed(2);
     const kpiEconomicUsd = document.getElementById('kpiEconomicUsd');
     if (kpiEconomicUsd) {
         kpiEconomicUsd.textContent = `$${savedUsd} USD recuperados (de $${totalSheetUsd} USD costo lámina a $${pricePerM2.toFixed(2)}/m²)`;
     }
 
-    // 3. Dibujar Plano de Corte 2D en el Canvas
     drawCuttingPlan(data.sheet_width, data.sheet_height, data.placed_pieces, data.defect_coords);
 }
 
@@ -395,7 +457,6 @@ function drawCuttingPlan(sheetW, sheetH, placedPieces, defectCoords) {
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
 
-    // Escala milímetros a píxeles del canvas
     const scaleX = canvasWidth / sheetW;
     const scaleY = canvasHeight / sheetH;
 
@@ -403,21 +464,24 @@ function drawCuttingPlan(sheetW, sheetH, placedPieces, defectCoords) {
     ctx.fillStyle = '#E2E8F0';
     ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
-    // Rejilla de fondo milimétrica (cada 200 mm)
-    ctx.strokeStyle = '#CBD5E1';
+    // Cuadrícula de referencia del plano de corte
+    ctx.strokeStyle = '#94A3B8';
     ctx.lineWidth = 1;
-    for (let x = 0; x <= sheetW; x += 200) {
+    ctx.setLineDash([2, 2]);
+    const stepX = canvasWidth / 20.0;
+    const stepY = canvasHeight / 20.0;
+    for (let i = 1; i < 20; i++) {
         ctx.beginPath();
-        ctx.moveTo(x * scaleX, 0);
-        ctx.lineTo(x * scaleX, canvasHeight);
+        ctx.moveTo(i * stepX, 0);
+        ctx.lineTo(i * stepX, canvasHeight);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(0, i * stepY);
+        ctx.lineTo(canvasWidth, i * stepY);
         ctx.stroke();
     }
-    for (let y = 0; y <= sheetH; y += 200) {
-        ctx.beginPath();
-        ctx.moveTo(0, y * scaleY);
-        ctx.lineTo(canvasWidth, y * scaleY);
-        ctx.stroke();
-    }
+    ctx.setLineDash([]);
 
     // Dibujar Zona Defectuosa (Obstáculo esquivado en rojo brillante)
     if (defectCoords && defectCoords.w > 0 && defectCoords.h > 0) {
@@ -434,13 +498,11 @@ function drawCuttingPlan(sheetW, sheetH, placedPieces, defectCoords) {
         ctx.strokeRect(dx, dy, dw, dh);
         ctx.setLineDash([]);
 
-        // Etiqueta de falla
         ctx.fillStyle = '#991B1B';
         ctx.font = 'bold 12px system-ui';
-        ctx.fillText('⚠️ DEFECTO', dx + 4, dy + 16);
+        ctx.fillText('ZONA DE DEFECTO', dx + 4, dy + 16);
     }
 
-    // Paleta de colores para las piezas de corte
     const pieceColors = [
         { fill: 'rgba(2, 132, 199, 0.85)', stroke: '#0369A1' },
         { fill: 'rgba(16, 185, 129, 0.85)', stroke: '#047857' },
@@ -449,7 +511,6 @@ function drawCuttingPlan(sheetW, sheetH, placedPieces, defectCoords) {
         { fill: 'rgba(236, 72, 153, 0.85)', stroke: '#BE185D' }
     ];
 
-    // Dibujar cada pieza acomodada por el algoritmo Bin Packing
     if (placedPieces && placedPieces.length > 0) {
         placedPieces.forEach((p, index) => {
             const px = p.x * scaleX;
@@ -459,51 +520,202 @@ function drawCuttingPlan(sheetW, sheetH, placedPieces, defectCoords) {
 
             const color = pieceColors[index % pieceColors.length];
 
-            // Relleno de la pieza
             ctx.fillStyle = color.fill;
             ctx.fillRect(px, py, pw, ph);
 
-            // Borde de corte preciso
             ctx.strokeStyle = color.stroke;
             ctx.lineWidth = 2;
             ctx.strokeRect(px, py, pw, ph);
 
-            // Texto identificador de la pieza
             ctx.fillStyle = '#FFFFFF';
             ctx.font = 'bold 13px system-ui';
             ctx.fillText(p.id, px + 8, py + 20);
 
-            // Dimensiones
             ctx.font = '11px system-ui';
-            ctx.fillText(`${p.w}x${p.h} mm`, px + 8, py + 36);
+            ctx.fillText(`${p.w}x${p.h}`, px + 8, py + 36);
 
-            // Indicador de rotación si aplica
             if (p.rotated) {
-                ctx.fillText('🔄 Rotado 90°', px + 8, py + 52);
+                ctx.fillText('Rotado 90°', px + 8, py + 52);
             }
         });
     }
 
-    // Borde exterior de la lámina
     ctx.strokeStyle = '#0F172A';
     ctx.lineWidth = 3;
     ctx.strokeRect(0, 0, canvasWidth, canvasHeight);
 }
 
 /* ==========================================================================
-   8. AUTENTICACIÓN POR ROLES (CLAVE ESPECIAL ADMIN) Y TRAZABILIDAD BD
+   8. DOS MENÚS DESPLEGABLES (1. MÓDULO DEL SISTEMA / 2. FUNCIONES DEL MÓDULO)
+   ========================================================================== */
+const MODULE_FUNCTIONS_MAP = {
+    vision: [
+        { id: 'cam', label: 'Capturar Lámina con Cámara' },
+        { id: 'gal', label: 'Seleccionar Imagen de Lámina' },
+        { id: 'fix_sheet', label: '1. Validar y Fijar Tamaño de Lámina Madre' },
+        { id: 'add_piece', label: '2. Agregar Pieza de Corte a la Lista' },
+        { id: 'run_opt', label: '3. Analizar Lámina (Canny + IA) y Optimizar Cortes' },
+        { id: 'reset_opt', label: 'Limpiar / Reiniciar Módulo' }
+    ],
+    traceability: [
+        { id: 'refresh_trace', label: 'Actualizar Datos de Trazabilidad y Dashboard' }
+    ],
+    admin: [
+        { id: 'admin_add', label: '1. Agregar Usuario' },
+        { id: 'admin_edit', label: '2. Modificar Usuario' },
+        { id: 'admin_del', label: '3. Eliminar Usuario' },
+        { id: 'admin_query', label: '4. Consultar Usuario' },
+        { id: 'admin_refresh', label: 'Refrescar Panel Administrativo' }
+    ],
+    maintenance: [
+        { id: 'maint_diag', label: '1. Diagnóstico y Optimización SQLite (VACUUM)' },
+        { id: 'maint_bak', label: '2. Crear Respaldo de Base de Datos (.bak)' },
+        { id: 'maint_unlock', label: '3. Desbloquear Todas las Cuentas de Usuarios' },
+        { id: 'maint_clean', label: '4. Depurar Historial de Auditoría Antiguo' },
+        { id: 'maint_engine', label: '5. Verificar Motor de Corte y Red Neuronal' }
+    ]
+};
+
+function populateFunctionDropdown(moduleKey) {
+    const fnSelect = document.getElementById('functionDropdown');
+    if (!fnSelect) return;
+    const items = MODULE_FUNCTIONS_MAP[moduleKey] || [];
+    fnSelect.innerHTML = `<option value="">-- Seleccione una función (${items.length} disponibles) --</option>` +
+        items.map(item => `<option value="${item.id}">${item.label}</option>`).join('');
+}
+
+function switchActiveModule(moduleKey) {
+    const tabMap = {
+        vision: 'tab-vision-btn',
+        traceability: 'tab-traceability-btn',
+        admin: 'tab-admin-btn',
+        maintenance: 'tab-maintenance-btn'
+    };
+    const btnId = tabMap[moduleKey];
+    const tabBtn = btnId ? document.getElementById(btnId) : null;
+    if (tabBtn) {
+        tabBtn.click();
+    }
+    populateFunctionDropdown(moduleKey);
+    if (moduleKey === 'traceability' || moduleKey === 'admin' || moduleKey === 'maintenance') {
+        if (typeof window.loadTraceabilityData === 'function') {
+            window.loadTraceabilityData();
+        }
+    }
+}
+
+function executeSelectedModuleFunction() {
+    const fnSelect = document.getElementById('functionDropdown');
+    const actionId = fnSelect?.value || '';
+    if (!actionId) {
+        alert('Seleccione una función en el menú desplegable "2. Funciones del Módulo".');
+        return;
+    }
+
+    switch (actionId) {
+        case 'cam':
+            document.getElementById('btnTriggerCamera')?.click();
+            break;
+        case 'gal':
+            document.getElementById('btnTriggerGallery')?.click();
+            break;
+        case 'fix_sheet':
+            window.confirmSheetSize();
+            break;
+        case 'add_piece':
+            document.getElementById('btnAddOrder')?.click();
+            break;
+        case 'run_opt': {
+            const btnProc = document.getElementById('btnProcessImage');
+            if (btnProc && !btnProc.disabled) {
+                btnProc.click();
+            } else {
+                alert('Primero seleccione una imagen de lámina, valide el tamaño de la Lámina Madre y agregue al menos una pieza.');
+            }
+            break;
+        }
+        case 'reset_opt':
+            document.getElementById('btnRefreshOrders')?.click();
+            break;
+        case 'refresh_trace':
+            window.loadTraceabilityData();
+            break;
+        case 'admin_add':
+            window.openAdminCrudModal('add');
+            break;
+        case 'admin_edit':
+            window.openAdminCrudModal('edit');
+            break;
+        case 'admin_del':
+            window.openAdminCrudModal('delete');
+            break;
+        case 'admin_query':
+            window.openAdminCrudModal('query');
+            break;
+        case 'admin_refresh':
+            window.loadTraceabilityData();
+            break;
+        case 'maint_diag':
+            window.runMaintenanceTask('diagnostics');
+            break;
+        case 'maint_bak':
+            window.runMaintenanceTask('backup');
+            break;
+        case 'maint_unlock':
+            window.runMaintenanceTask('unlock_accounts');
+            break;
+        case 'maint_clean':
+            window.runMaintenanceTask('clean_logs');
+            break;
+        case 'maint_engine':
+            window.runMaintenanceTask('verify_engine');
+            break;
+    }
+}
+
+function initModuleAndFunctionMenus() {
+    const modSelect = document.getElementById('moduleDropdown');
+    const fnSelect = document.getElementById('functionDropdown');
+    const btnExec = document.getElementById('btnExecModuleFunction');
+
+    if (modSelect) {
+        populateFunctionDropdown(modSelect.value || 'vision');
+        modSelect.addEventListener('change', () => {
+            switchActiveModule(modSelect.value);
+        });
+    }
+
+    if (fnSelect) {
+        fnSelect.addEventListener('change', () => {
+            if (fnSelect.value) {
+                executeSelectedModuleFunction();
+            }
+        });
+    }
+
+    if (btnExec) {
+        btnExec.addEventListener('click', () => {
+            executeSelectedModuleFunction();
+        });
+    }
+}
+
+/* ==========================================================================
+   9. AUTENTICACIÓN POR ROLES, CRUD DE USUARIOS Y MANTENIMIENTO SUPERUSUARIO
    ========================================================================== */
 window.togglePasswordVisibility = function(inputId, btn) {
     const input = document.getElementById(inputId);
     if (!input) return;
     if (input.type === 'password') {
         input.type = 'text';
-        if (btn) btn.textContent = '🙈';
+        if (btn) btn.textContent = 'Ocultar';
     } else {
         input.type = 'password';
-        if (btn) btn.textContent = '👁️';
+        if (btn) btn.textContent = 'Ver';
     }
 };
+
+let cachedAdminUsers = [];
 
 function initAuthAndTraceability() {
     const root = document.getElementById('siamAppRoot');
@@ -525,8 +737,8 @@ function initAuthAndTraceability() {
     const btnLogout = document.getElementById('btnLogout');
     const navUserBadge = document.getElementById('navUserBadge');
     const navAdminTabItem = document.getElementById('navAdminTabItem');
+    const navMaintenanceTabItem = document.getElementById('navMaintenanceTabItem');
 
-    let pendingRegOtp = null;
     let forgotUserId = null;
 
     function showAlert(msg, isSuccess = false) {
@@ -536,23 +748,35 @@ function initAuthAndTraceability() {
     }
 
     function updateHeaderSession(username, role) {
+        const isAdminOrSuper = (role === 'admin' || role === 'superadmin');
+        const isSuper = (role === 'superadmin');
+
         if (username) {
             if (authOverlay) {
                 authOverlay.classList.add('d-none');
                 authOverlay.classList.remove('d-flex');
             }
             if (navUserBadge) {
-                navUserBadge.textContent = `👤 ${username} (${(role || 'usuario').toUpperCase()})`;
+                navUserBadge.textContent = `Usuario: ${username} (${(role || 'usuario').toUpperCase()})`;
                 navUserBadge.classList.remove('d-none');
             }
             if (btnLogout) btnLogout.classList.remove('d-none');
+
             if (navAdminTabItem) {
-                if (role === 'admin') navAdminTabItem.classList.remove('d-none');
-                else navAdminTabItem.classList.add('d-none');
+                navAdminTabItem.classList.toggle('d-none', !isAdminOrSuper);
             }
+            if (navMaintenanceTabItem) {
+                navMaintenanceTabItem.classList.toggle('d-none', !isSuper);
+            }
+
+            const optAdmin = document.getElementById('optModuleAdmin');
+            const optMaint = document.getElementById('optModuleMaintenance');
+            if (optAdmin) optAdmin.classList.toggle('d-none', !isAdminOrSuper);
+            if (optMaint) optMaint.classList.toggle('d-none', !isSuper);
+
             const adminPriceCol = document.getElementById('adminPricePerM2Col');
             const adminUsdBanner = document.getElementById('adminEconomicUsdBanner');
-            if (role === 'admin') {
+            if (isAdminOrSuper) {
                 if (adminPriceCol) adminPriceCol.classList.remove('d-none');
                 if (adminUsdBanner) {
                     adminUsdBanner.classList.remove('d-none');
@@ -574,6 +798,7 @@ function initAuthAndTraceability() {
             if (navUserBadge) navUserBadge.classList.add('d-none');
             if (btnLogout) btnLogout.classList.add('d-none');
             if (navAdminTabItem) navAdminTabItem.classList.add('d-none');
+            if (navMaintenanceTabItem) navMaintenanceTabItem.classList.add('d-none');
         }
     }
 
@@ -596,7 +821,6 @@ function initAuthAndTraceability() {
     }
 
     function resetRegisterState() {
-        pendingRegOtp = null;
         const otpSec = document.getElementById('regOtpSection');
         if (otpSec) otpSec.classList.add('d-none');
         const otpInput = document.getElementById('regOtpInput');
@@ -686,8 +910,9 @@ function initAuthAndTraceability() {
                 showAlert('El Nombre de Usuario debe tener al menos 3 caracteres.');
                 return;
             }
-            if (!email.includes('@')) {
-                showAlert('El Correo Electrónico debe incluir obligatoriamente el signo @.');
+            const strictEmailRegex = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,12}$/;
+            if (!strictEmailRegex.test(email) || email.includes('..')) {
+                showAlert('Formato de correo electrónico inválido. Ejemplo válido: usuario@dominio.com');
                 return;
             }
             if (!/^\d{7,15}$/.test(phone)) {
@@ -696,27 +921,6 @@ function initAuthAndTraceability() {
             }
             if (password.length < 8) {
                 showAlert('La contraseña debe tener un mínimo de 8 caracteres.');
-                return;
-            }
-
-            // Paso 1: Generar código OTP en la Bandeja de Seguridad SIAM antes de activar la cuenta
-            if (!pendingRegOtp) {
-                pendingRegOtp = String(Math.floor(100000 + Math.random() * 900000));
-                const otpSec = document.getElementById('regOtpSection');
-                const banner = document.getElementById('regInboxBanner');
-                if (banner) {
-                    banner.innerHTML = `📬 [Bandeja de Entrada SIAM]<br>Código de Activación: <span class="text-warning">${pendingRegOtp}</span>`;
-                }
-                if (otpSec) otpSec.classList.remove('d-none');
-                btnDoRegister.textContent = '✅ Verificar Código y Activar Cuenta';
-                showAlert(`Hemos enviado el código de activación a ${email}. Ingrésalo abajo para confirmar.`, true);
-                return;
-            }
-
-            // Paso 2: Validar el código OTP ingresado
-            const enteredOtp = (document.getElementById('regOtpInput')?.value || '').trim();
-            if (enteredOtp !== pendingRegOtp) {
-                showAlert('El código de verificación de 6 dígitos no coincide.');
                 return;
             }
 
@@ -763,7 +967,7 @@ function initAuthAndTraceability() {
                 forgotUserId = data.user_id;
                 const banner = document.getElementById('forgotInboxBanner');
                 if (banner) {
-                    banner.innerHTML = `📬 [Bandeja de Seguridad SIAM]<br>Cuenta: ${data.email}<br>Código de Recuperación: <span class="text-warning">${data.code}</span>`;
+                    banner.innerHTML = `[Bandeja de Seguridad SIAM]<br>Cuenta: ${data.email}<br>Código de Recuperación: <span class="text-warning">${data.code}</span>`;
                 }
                 document.getElementById('forgotStep1')?.classList.add('d-none');
                 document.getElementById('forgotStep2')?.classList.remove('d-none');
@@ -821,7 +1025,307 @@ function initAuthAndTraceability() {
 
     const btnRefreshAdmin = document.getElementById('btnRefreshAdmin');
     if (btnRefreshAdmin) btnRefreshAdmin.addEventListener('click', loadTraceabilityData);
+
+    // 4 Botones CRUD del Panel Administrativo (Punto 3)
+    document.getElementById('btnAdminAddUser')?.addEventListener('click', () => window.openAdminCrudModal('add'));
+    document.getElementById('btnAdminEditUser')?.addEventListener('click', () => window.openAdminCrudModal('edit'));
+    document.getElementById('btnAdminDeleteUser')?.addEventListener('click', () => window.openAdminCrudModal('delete'));
+    document.getElementById('btnAdminQueryUser')?.addEventListener('click', () => window.openAdminCrudModal('query'));
+    document.getElementById('btnCloseAdminCrud')?.addEventListener('click', () => {
+        document.getElementById('adminCrudBox')?.classList.add('d-none');
+    });
 }
+
+function showAdminActionMessage(msg, isSuccess = true) {
+    const alertEl = document.getElementById('adminActionAlert');
+    if (!alertEl) {
+        alert(msg);
+        return;
+    }
+    alertEl.textContent = msg;
+    alertEl.className = `alert py-2 small ${isSuccess ? 'alert-success' : 'alert-danger'}`;
+    alertEl.classList.remove('d-none');
+}
+
+window.openAdminCrudModal = function(mode) {
+    const box = document.getElementById('adminCrudBox');
+    const title = document.getElementById('adminCrudTitle');
+    const body = document.getElementById('adminCrudBody');
+    if (!box || !title || !body) return;
+
+    box.classList.remove('d-none');
+
+    if (mode === 'add') {
+        title.textContent = '1. Agregar Nuevo Usuario';
+        body.innerHTML = `
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <label class="form-label small fw-bold">Nombre de Usuario:</label>
+                    <input type="text" id="crudAddUsername" class="form-control form-control-sm" placeholder="Ej: operador1">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small fw-bold">Correo Electrónico:</label>
+                    <input type="email" id="crudAddEmail" class="form-control form-control-sm" placeholder="Ej: operador1@gmail.com">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold">Teléfono:</label>
+                    <input type="text" id="crudAddPhone" class="form-control form-control-sm" placeholder="Ej: 04121234567">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold">Contraseña:</label>
+                    <input type="password" id="crudAddPass" class="form-control form-control-sm" placeholder="Mín. 8 caract, Mayús, Núm, Símb">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold">Rol en el Sistema:</label>
+                    <select id="crudAddRole" class="form-select form-select-sm">
+                        <option value="usuario">Usuario Normal (Operador)</option>
+                        <option value="admin">Administrador</option>
+                    </select>
+                </div>
+                <div class="col-12 mt-2 d-grid">
+                    <button type="button" class="btn btn-sm btn-success fw-bold" onclick="submitAdminAddUser()">Guardar Nuevo Usuario</button>
+                </div>
+            </div>
+        `;
+    } else if (mode === 'edit') {
+        title.textContent = '2. Modificar Usuario Existente';
+        const userOptions = cachedAdminUsers
+            .filter(u => u.username !== 'programador')
+            .map(u => `<option value="${u.id}">ID ${u.id} - ${u.username} (${u.email}) [${u.role}]</option>`)
+            .join('');
+        body.innerHTML = `
+            <div class="row g-2">
+                <div class="col-12">
+                    <label class="form-label small fw-bold">Seleccionar Usuario a Modificar:</label>
+                    <select id="crudEditSelect" class="form-select form-select-sm" onchange="fillAdminEditFields()">
+                        <option value="">-- Seleccione un usuario --</option>
+                        ${userOptions}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small fw-bold">Nuevo Nombre de Usuario:</label>
+                    <input type="text" id="crudEditUsername" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small fw-bold">Nuevo Correo Electrónico:</label>
+                    <input type="email" id="crudEditEmail" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold">Nuevo Teléfono:</label>
+                    <input type="text" id="crudEditPhone" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold">Rol:</label>
+                    <select id="crudEditRole" class="form-select form-select-sm">
+                        <option value="usuario">usuario</option>
+                        <option value="admin">admin</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold">Nueva Contraseña (opcional):</label>
+                    <input type="password" id="crudEditPass" class="form-control form-control-sm" placeholder="Dejar vacío para mantener">
+                </div>
+                <div class="col-12 mt-2 d-grid">
+                    <button type="button" class="btn btn-sm btn-primary fw-bold" onclick="submitAdminEditUser()">Actualizar Datos del Usuario</button>
+                </div>
+            </div>
+        `;
+    } else if (mode === 'delete') {
+        title.textContent = '3. Eliminar Usuario del Sistema';
+        const userOptions = cachedAdminUsers
+            .filter(u => u.username !== 'programador')
+            .map(u => `<option value="${u.id}">ID ${u.id} - ${u.username} (${u.email}) [${u.role}]</option>`)
+            .join('');
+        body.innerHTML = `
+            <div class="row g-2">
+                <div class="col-12">
+                    <label class="form-label small fw-bold">Seleccionar Usuario a Eliminar:</label>
+                    <select id="crudDeleteSelect" class="form-select form-select-sm">
+                        <option value="">-- Seleccione un usuario --</option>
+                        ${userOptions}
+                    </select>
+                </div>
+                <div class="col-12 mt-2 d-grid">
+                    <button type="button" class="btn btn-sm btn-danger fw-bold" onclick="submitAdminDeleteUser()">Confirmar Eliminación de Usuario</button>
+                </div>
+            </div>
+        `;
+    } else if (mode === 'query') {
+        title.textContent = '4. Consultar Usuario';
+        body.innerHTML = `
+            <div class="row g-2">
+                <div class="col-9">
+                    <input type="text" id="crudQueryInput" class="form-control form-control-sm" placeholder="Buscar por ID, nombre de usuario, correo, teléfono o rol...">
+                </div>
+                <div class="col-3 d-grid">
+                    <button type="button" class="btn btn-sm btn-info text-dark fw-bold" onclick="submitAdminQueryUser()">Buscar</button>
+                </div>
+                <div class="col-12 mt-2" id="crudQueryResults"></div>
+            </div>
+        `;
+    }
+};
+
+window.fillAdminEditFields = function() {
+    const idVal = parseInt(document.getElementById('crudEditSelect')?.value || '0', 10);
+    const user = cachedAdminUsers.find(u => u.id === idVal);
+    if (!user) return;
+    document.getElementById('crudEditUsername').value = user.username || '';
+    document.getElementById('crudEditEmail').value = user.email || '';
+    document.getElementById('crudEditPhone').value = user.phone || '';
+    document.getElementById('crudEditRole').value = (user.role || 'usuario').toLowerCase();
+};
+
+window.submitAdminAddUser = async function() {
+    const username = (document.getElementById('crudAddUsername')?.value || '').trim();
+    const email = (document.getElementById('crudAddEmail')?.value || '').trim();
+    const phone = (document.getElementById('crudAddPhone')?.value || '').trim();
+    const password = (document.getElementById('crudAddPass')?.value || '').trim();
+    const role = document.getElementById('crudAddRole')?.value || 'usuario';
+
+    try {
+        const res = await fetch('/api/admin/users/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, email, phone, password, role })
+        });
+        const data = await res.json();
+        showAdminActionMessage(data.message, data.success);
+        if (data.success) {
+            document.getElementById('adminCrudBox')?.classList.add('d-none');
+            loadTraceabilityData();
+        }
+    } catch (e) {
+        showAdminActionMessage('Error al agregar usuario.', false);
+    }
+};
+
+window.submitAdminEditUser = async function() {
+    const user_id = parseInt(document.getElementById('crudEditSelect')?.value || '0', 10);
+    if (!user_id) {
+        showAdminActionMessage('Seleccione primero un usuario para modificar.', false);
+        return;
+    }
+    const username = (document.getElementById('crudEditUsername')?.value || '').trim();
+    const email = (document.getElementById('crudEditEmail')?.value || '').trim();
+    const phone = (document.getElementById('crudEditPhone')?.value || '').trim();
+    const role = document.getElementById('crudEditRole')?.value || 'usuario';
+    const new_password = (document.getElementById('crudEditPass')?.value || '').trim();
+
+    try {
+        const res = await fetch('/api/admin/users/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id, username, email, phone, role, new_password })
+        });
+        const data = await res.json();
+        showAdminActionMessage(data.message, data.success);
+        if (data.success) {
+            document.getElementById('adminCrudBox')?.classList.add('d-none');
+            loadTraceabilityData();
+        }
+    } catch (e) {
+        showAdminActionMessage('Error al modificar usuario.', false);
+    }
+};
+
+window.submitAdminDeleteUser = async function() {
+    const user_id = parseInt(document.getElementById('crudDeleteSelect')?.value || '0', 10);
+    if (!user_id) {
+        showAdminActionMessage('Seleccione un usuario para eliminar.', false);
+        return;
+    }
+    if (!confirm('¿Está seguro de que desea eliminar este usuario de forma permanente?')) {
+        return;
+    }
+    try {
+        const res = await fetch('/api/admin/users/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id })
+        });
+        const data = await res.json();
+        showAdminActionMessage(data.message, data.success);
+        if (data.success) {
+            document.getElementById('adminCrudBox')?.classList.add('d-none');
+            loadTraceabilityData();
+        }
+    } catch (e) {
+        showAdminActionMessage('Error al eliminar usuario.', false);
+    }
+};
+
+window.submitAdminQueryUser = async function() {
+    const q = (document.getElementById('crudQueryInput')?.value || '').trim();
+    const container = document.getElementById('crudQueryResults');
+    if (!container) return;
+
+    try {
+        const res = await fetch(`/api/admin/users/search?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        if (!data.success || !data.users || data.users.length === 0) {
+            container.innerHTML = `<div class="alert alert-warning py-2 small mb-0">No se encontraron usuarios que coincidan con "${q}".</div>`;
+            return;
+        }
+        container.innerHTML = `
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered small mb-0">
+                    <thead class="table-light">
+                        <tr><th>ID</th><th>Usuario</th><th>Correo</th><th>Teléfono</th><th>Rol</th><th>Intentos Fallidos</th><th>Creado</th></tr>
+                    </thead>
+                    <tbody>
+                        ${data.users.map(u => `
+                            <tr>
+                                <td>${u.id}</td>
+                                <td class="fw-bold">${u.username}</td>
+                                <td>${u.email}</td>
+                                <td>${u.phone}</td>
+                                <td><span class="badge bg-secondary">${u.role}</span></td>
+                                <td>${u.failed_attempts}</td>
+                                <td>${u.created_at}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (e) {
+        container.innerHTML = `<div class="alert alert-danger py-2 small mb-0">Error al consultar usuarios.</div>`;
+    }
+};
+
+window.runMaintenanceTask = async function(action) {
+    const consoleEl = document.getElementById('maintenanceConsole');
+    try {
+        const res = await fetch('/api/maintenance/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        const data = await res.json();
+        const ts = new Date().toLocaleTimeString();
+        if (consoleEl) {
+            consoleEl.textContent = `[${ts}] Operación: ${action.toUpperCase()}\nResultado: ${data.message}\n` +
+                (data.diagnostics ? `Diagnóstico BD: Integridad=${data.diagnostics.integrity} | Tamaño=${data.diagnostics.db_size_kb} KB | Usuarios=${data.diagnostics.users_count} | Bloqueados=${data.diagnostics.locked_users}\n` : '') +
+                `\n` + consoleEl.textContent;
+        }
+        if (data.diagnostics) {
+            const elInt = document.getElementById('maintIntegrity');
+            const elSize = document.getElementById('maintDbSize');
+            const elLock = document.getElementById('maintLocked');
+            const elLogs = document.getElementById('maintLogsCount');
+            if (elInt) elInt.textContent = data.diagnostics.integrity;
+            if (elSize) elSize.textContent = `${data.diagnostics.db_size_kb} KB`;
+            if (elLock) elLock.textContent = data.diagnostics.locked_users;
+            if (elLogs) elLogs.textContent = data.diagnostics.logs_count;
+        }
+        loadTraceabilityData();
+    } catch (e) {
+        if (consoleEl) {
+            consoleEl.textContent = `[ERROR] No se pudo ejecutar la tarea de mantenimiento: ${action}\n` + consoleEl.textContent;
+        }
+    }
+};
 
 window.loadTraceabilityData = async function() {
     try {
@@ -829,7 +1333,6 @@ window.loadTraceabilityData = async function() {
         const data = await res.json();
         if (!data.success) return;
 
-        // 1. Actualizar KPIs de Trazabilidad
         const elTot = document.getElementById('statTotalDefects');
         const elAvg = document.getElementById('statAvgArea');
         const elMax = document.getElementById('statMaxArea');
@@ -837,7 +1340,6 @@ window.loadTraceabilityData = async function() {
         if (elAvg) elAvg.textContent = `${data.summary.avg_area} mm²`;
         if (elMax) elMax.textContent = `${data.summary.max_area} mm²`;
 
-        // 2. Poblar tabla de inspecciones
         const tbody = document.getElementById('traceabilityTableBody');
         if (tbody) {
             tbody.innerHTML = (data.inspections || []).map(r => {
@@ -856,17 +1358,17 @@ window.loadTraceabilityData = async function() {
             }).join('');
         }
 
-        // 3. Poblar tablas del Panel Administrador (si aplica)
         if (data.admin_data) {
+            cachedAdminUsers = data.admin_data.users || [];
             const uBody = document.getElementById('adminUsersTableBody');
             if (uBody) {
-                uBody.innerHTML = data.admin_data.users.map(u => `
+                uBody.innerHTML = cachedAdminUsers.map(u => `
                     <tr>
                         <td>${u.id}</td>
                         <td class="fw-bold">${u.username}</td>
                         <td>${u.email}</td>
                         <td>${u.phone}</td>
-                        <td><span class="badge ${u.role === 'ADMIN' ? 'bg-info text-dark' : 'bg-secondary'}">${u.role}</span></td>
+                        <td><span class="badge ${u.role === 'ADMIN' || u.role === 'SUPERADMIN' ? 'bg-info text-dark' : 'bg-secondary'}">${u.role}</span></td>
                     </tr>
                 `).join('');
             }
@@ -895,6 +1397,17 @@ window.loadTraceabilityData = async function() {
                     </tr>
                 `).join('');
             }
+        }
+
+        if (data.maintenance_data) {
+            const elInt = document.getElementById('maintIntegrity');
+            const elSize = document.getElementById('maintDbSize');
+            const elLock = document.getElementById('maintLocked');
+            const elLogs = document.getElementById('maintLogsCount');
+            if (elInt) elInt.textContent = data.maintenance_data.integrity;
+            if (elSize) elSize.textContent = `${data.maintenance_data.db_size_kb} KB`;
+            if (elLock) elLock.textContent = data.maintenance_data.locked_users;
+            if (elLogs) elLogs.textContent = data.maintenance_data.logs_count;
         }
     } catch (err) {
         console.error('Error cargando trazabilidad:', err);
