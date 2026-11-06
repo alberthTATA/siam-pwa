@@ -19,6 +19,7 @@ if _BASE_DIR not in sys.path:
 from flask import Flask, render_template, request, jsonify, send_from_directory, make_response, session
 from vision import process_glass_sheet
 from src.database.db_manager import DatabaseManager
+from src.optimization.bin_packing import GlassSheet
 
 # Configuración de Logging
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
@@ -137,7 +138,8 @@ def index():
             background-color: #1E293B !important;
             border: 1px solid #334155 !important;
             color: #38BDF8 !important;
-            font-size: 15px !important;
+            font-size: 12px !important;
+            font-weight: 700 !important;
             padding: 0 12px !important;
             cursor: pointer;
         }
@@ -152,10 +154,10 @@ def index():
             if (!input) return;
             if (input.type === 'password') {
                 input.type = 'text';
-                if (btn) btn.textContent = '🙈';
+                if (btn) btn.textContent = 'Ocultar';
             } else {
                 input.type = 'password';
-                if (btn) btn.textContent = '👁️';
+                if (btn) btn.textContent = 'Ver';
             }
         };
         document.addEventListener('DOMContentLoaded', function() {
@@ -167,14 +169,14 @@ def index():
                     });
                 });
             }
-            // Asegurar etiquetas visibles encima de cada campo de Registro y Login
+            // Asegurar etiquetas visibles encima de cada campo de Registro y Login (Sin Emojis - Punto 4)
             var fieldLabels = [
-                { id: 'regUsername', label: '👤 Nombre de Usuario:', placeholder: 'Ej: juanperez (mín. 3 caracteres)' },
-                { id: 'regEmail', label: '📧 Correo Electrónico:', placeholder: 'Ej: correo@gmail.com (con @)' },
-                { id: 'regPhone', label: '📱 Número de Teléfono:', placeholder: 'Ej: 04121234567 (solo números)' },
-                { id: 'regPassword', label: '🔒 Contraseña Segura:', placeholder: 'Mín. 8 caract., Mayús, Núm y Símbolo' },
-                { id: 'regAdminKey', label: '🔑 Clave Secreta de Administrador:', placeholder: 'Ingresa la clave especial SIAM' },
-                { id: 'loginAdminKey', label: '🔑 Clave Especial de Administrador:', placeholder: 'Ingresa la clave especial SIAM' }
+                { id: 'regUsername', label: 'Nombre de Usuario:', placeholder: 'Ej: juanperez (min. 3 caracteres)' },
+                { id: 'regEmail', label: 'Correo Electronico:', placeholder: 'Ej: correo@gmail.com (con @ y dominio valido)' },
+                { id: 'regPhone', label: 'Numero de Telefono:', placeholder: 'Ej: 04121234567 (solo numeros)' },
+                { id: 'regPassword', label: 'Contrasena Segura:', placeholder: 'Min. 8 caract., Mayus, Num y Simbolo' },
+                { id: 'regAdminKey', label: 'Clave Secreta de Administrador:', placeholder: 'Ingresa la clave especial SIAM2026' },
+                { id: 'loginAdminKey', label: 'Clave Especial de Administrador:', placeholder: 'Ingresa la clave especial SIAM2026' }
             ];
             fieldLabels.forEach(function(item) {
                 var el = document.getElementById(item.id);
@@ -189,7 +191,7 @@ def index():
                     container.insertBefore(lbl, container.firstChild);
                 }
             });
-            // Asegurar botón de ojito (👁️) en todos los campos de contraseña y clave especial
+            // Asegurar botón Ver/Ocultar (sin emojis) en todos los campos de contraseña y clave especial
             ['loginPassword', 'loginAdminKey', 'regPassword', 'regAdminKey'].forEach(function(pwdId) {
                 var pwdEl = document.getElementById(pwdId);
                 if (!pwdEl) return;
@@ -202,7 +204,7 @@ def index():
                 btn.type = 'button';
                 btn.className = 'btn btn-eye-siam';
                 btn.title = 'Mostrar / Ocultar clave';
-                btn.textContent = '👁️';
+                btn.textContent = 'Ver';
                 btn.onclick = function() { window.togglePasswordVisibility(pwdId, btn); };
                 wrapper.appendChild(btn);
             });
@@ -256,7 +258,13 @@ def index():
 
 @app.route('/api/auth/login', methods=['POST'])
 def api_login():
-    """Autentica al usuario y valida la Clave Especial de Administrador (SIAM2026) si fue solicitada."""
+    """
+    Autentica al usuario en SIAM Online.
+    - Punto 7: Si es el Superusuario Programador ('programador' / rol 'superadmin'), habilita el Módulo de Mantenimiento.
+    - Punto 9: Si el usuario se registró sin la clave de admin SIAM2026 (su rol en BD es 'usuario') e intenta abrir
+      el login administrativo, se le deniega el acceso con un mensaje indicando que no está registrado como Administrador
+      sino como Usuario Normal.
+    """
     if not db_manager:
         return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
 
@@ -267,22 +275,34 @@ def api_login():
     admin_key = (data.get('admin_key') or '').strip()
 
     if not identifier or not password:
-        return jsonify({'success': False, 'message': 'Por favor ingresa tu usuario/correo y contraseña.'}), 400
-
-    if wants_admin or admin_key:
-        if not admin_key:
-            return jsonify({'success': False, 'message': 'Debes ingresar la Clave Especial de Administrador o desmarcar la casilla.'}), 400
-        if admin_key != DatabaseManager.ADMIN_SECRET_KEY:
-            return jsonify({'success': False, 'message': 'La Clave Especial de Administrador es incorrecta.'}), 403
+        return jsonify({'success': False, 'message': 'Por favor ingresa tu usuario/correo y contrasena.'}), 400
 
     res = db_manager.authenticate_user(identifier, password)
     if res == 'account_locked':
-        return jsonify({'success': False, 'message': 'Esta cuenta está bloqueada temporalmente por intentos fallidos.'}), 403
-    if not res:
-        return jsonify({'success': False, 'message': 'El usuario o la contraseña son incorrectos.'}), 401
+        return jsonify({'success': False, 'message': 'Esta cuenta esta bloqueada temporalmente por intentos fallidos.'}), 403
+    if not res or not isinstance(res, tuple):
+        return jsonify({'success': False, 'message': 'El usuario o la contrasena son incorrectos.'}), 401
 
-    user_id, username, _ = res
-    effective_role = 'admin' if (wants_admin or admin_key == DatabaseManager.ADMIN_SECRET_KEY) else 'usuario'
+    user_id, username, db_role = res
+    db_role_clean = str(db_role or 'usuario').lower()
+
+    # Punto 7: Superusuario exclusivo para el Programador
+    if db_role_clean == 'superadmin' or str(username).lower() == DatabaseManager.SUPERUSER_USERNAME.lower():
+        effective_role = 'superadmin'
+    elif wants_admin or bool(admin_key):
+        # Punto 9 (Exclusivo Versión Online): Verificar primero en la BD si el usuario realmente se registró como Administrador
+        if db_role_clean != 'admin':
+            return jsonify({
+                'success': False,
+                'message': 'No esta registrado como Administrador sino como Usuario Normal. Desmarque la casilla de Clave Especial para iniciar sesion.'
+            }), 403
+        if not admin_key:
+            return jsonify({'success': False, 'message': 'Debes ingresar la Clave Especial de Administrador (SIAM2026) o desmarcar la casilla.'}), 400
+        if admin_key != DatabaseManager.ADMIN_SECRET_KEY:
+            return jsonify({'success': False, 'message': 'La Clave Especial de Administrador es incorrecta.'}), 403
+        effective_role = 'admin'
+    else:
+        effective_role = 'usuario'
 
     session['user_id'] = user_id
     session['username'] = username
@@ -298,7 +318,7 @@ def api_login():
 
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
-    """Registra un nuevo usuario en la base de datos desde la interfaz web."""
+    """Registra un nuevo usuario en la base de datos desde la interfaz web con validación estricta de correo (Punto 6)."""
     if not db_manager:
         return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
 
@@ -314,12 +334,16 @@ def api_register():
         return jsonify({'success': False, 'message': 'Todos los campos son obligatorios.'}), 400
     if len(username) < 3:
         return jsonify({'success': False, 'message': 'El usuario debe tener al menos 3 caracteres.'}), 400
-    if '@' not in email:
-        return jsonify({'success': False, 'message': 'El correo electrónico debe incluir el signo @.'}), 400
+
+    # Punto 6: Validación estricta del correo electrónico
+    valid_mail, mail_err = DatabaseManager.validate_strict_email(email)
+    if not valid_mail:
+        return jsonify({'success': False, 'message': mail_err}), 400
+
     if not phone.isdigit() or len(phone) < 7:
-        return jsonify({'success': False, 'message': 'El teléfono debe contener solo números (mínimo 7 dígitos).'}), 400
+        return jsonify({'success': False, 'message': 'El telefono debe contener solo numeros (minimo 7 digitos).'}), 400
     if len(password) < 8:
-        return jsonify({'success': False, 'message': 'La contraseña debe tener mínimo 8 caracteres.'}), 400
+        return jsonify({'success': False, 'message': 'La contrasena debe tener minimo 8 caracteres.'}), 400
 
     existing_err = db_manager.check_user_exists(username, email, phone)
     if existing_err:
@@ -332,7 +356,8 @@ def api_register():
         role = 'admin'
 
     if db_manager.register_user(username, email, phone, password, role):
-        return jsonify({'success': True, 'message': f'¡Correo verificado y cuenta creada con éxito para {username}! Ya puedes iniciar sesión.'})
+        tipo_txt = 'Administrador' if role == 'admin' else 'Usuario Normal'
+        return jsonify({'success': True, 'message': f'Cuenta de {tipo_txt} creada con exito para {username}. Ya puedes iniciar sesion.'})
     return jsonify({'success': False, 'message': 'No se pudo registrar el usuario.'}), 500
 
 @app.route('/api/auth/forgot-send-code', methods=['POST'])
@@ -376,7 +401,7 @@ def api_forgot_reset():
     if len(new_password) < 8:
         return jsonify({'success': False, 'message': 'La nueva contraseña debe tener mínimo 8 caracteres.'}), 400
 
-    ok, msg = db_manager.complete_password_reset(int(user_id), code, new_password)
+    ok, msg = db_manager.complete_password_reset(int(str(user_id)), code, new_password)
     if not ok:
         return jsonify({'success': False, 'message': msg}), 400
     return jsonify({'success': True, 'message': msg})
@@ -427,10 +452,10 @@ def get_traceability_data():
         }
     }
 
-    # Si el usuario tiene sesión de Administrador, incluir tablas del Panel Administrador
-    if session.get('role') == 'admin':
+    # Si el usuario tiene sesión de Administrador o Superusuario, incluir tablas del Panel Administrador
+    if session.get('role') in ('admin', 'superadmin'):
         users = [
-            {'id': u[0], 'username': u[1], 'email': u[2], 'phone': u[3], 'role': u[4].upper()}
+            {'id': u[0], 'username': u[1], 'email': u[2], 'phone': u[3], 'role': str(u[4]).upper()}
             for u in db_manager.get_all_users()
         ]
         activity = [
@@ -438,7 +463,7 @@ def get_traceability_data():
             for a in db_manager.get_user_activity()[:50]
         ]
         metrics = [
-            {'username': m[0], 'role': m[1].upper(), 'action': m[2], 'total': m[3]}
+            {'username': m[0], 'role': str(m[1]).upper(), 'action': m[2], 'total': m[3]}
             for m in db_manager.get_user_metrics()
         ]
         response_payload['admin_data'] = {
@@ -447,7 +472,159 @@ def get_traceability_data():
             'metrics': metrics
         }
 
+    # Si es el Superusuario Programador, incluir información técnica del Módulo de Mantenimiento (Punto 7)
+    if session.get('role') == 'superadmin':
+        response_payload['maintenance_data'] = db_manager.run_maintenance_diagnostics()
+
     return jsonify(response_payload)
+
+# ==============================================================================
+# ENDPOINTS DE GESTIÓN DE USUARIOS DEL PANEL ADMINISTRATIVO (4 BOTONES - PUNTO 3)
+# ==============================================================================
+
+@app.route('/api/admin/users/add', methods=['POST'])
+def api_admin_add_user():
+    """1. Agregar Usuario desde el Panel Administrativo Online."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    if session.get('role') not in ('admin', 'superadmin'):
+        return jsonify({'success': False, 'message': 'Acceso denegado. Se requiere rol Administrador.'}), 403
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    email = (data.get('email') or '').strip()
+    phone = (data.get('phone') or '').strip()
+    password = (data.get('password') or '').strip()
+    role = (data.get('role') or 'usuario').strip().lower()
+
+    ok, msg = db_manager.admin_add_user(username, email, phone, password, role)
+    if ok and session.get('user_id'):
+        db_manager.log_activity(session['user_id'], "Admin Agregar Usuario Web", f"Agrego a {username} ({role})")
+    return jsonify({'success': ok, 'message': msg}), (200 if ok else 400)
+
+@app.route('/api/admin/users/update', methods=['POST'])
+def api_admin_update_user():
+    """2. Modificar Usuario desde el Panel Administrativo Online."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    if session.get('role') not in ('admin', 'superadmin'):
+        return jsonify({'success': False, 'message': 'Acceso denegado. Se requiere rol Administrador.'}), 403
+
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'message': 'Debe indicar el ID del usuario a modificar.'}), 400
+    username = (data.get('username') or '').strip()
+    email = (data.get('email') or '').strip()
+    phone = (data.get('phone') or '').strip()
+    role = (data.get('role') or 'usuario').strip().lower()
+    new_password = (data.get('new_password') or '').strip()
+
+    ok, msg = db_manager.admin_update_user(int(str(user_id)), username, email, phone, role, new_password)
+    if ok and session.get('user_id'):
+        db_manager.log_activity(session['user_id'], "Admin Modificar Usuario Web", f"Modifico ID #{user_id} ({username})")
+    return jsonify({'success': ok, 'message': msg}), (200 if ok else 400)
+
+@app.route('/api/admin/users/delete', methods=['POST'])
+def api_admin_delete_user():
+    """3. Eliminar Usuario desde el Panel Administrativo Online."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    if session.get('role') not in ('admin', 'superadmin'):
+        return jsonify({'success': False, 'message': 'Acceso denegado. Se requiere rol Administrador.'}), 403
+
+    data = request.get_json(silent=True) or {}
+    user_id = data.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'message': 'Debe indicar el ID del usuario a eliminar.'}), 400
+    target_uid = int(str(user_id))
+    if target_uid == int(session.get('user_id') or 0):
+        return jsonify({'success': False, 'message': 'No puede eliminar su propia cuenta con la sesion activa.'}), 400
+
+    ok, msg = db_manager.admin_delete_user(target_uid)
+    if ok and session.get('user_id'):
+        db_manager.log_activity(session['user_id'], "Admin Eliminar Usuario Web", f"Elimino ID #{user_id}")
+    return jsonify({'success': ok, 'message': msg}), (200 if ok else 400)
+
+@app.route('/api/admin/users/search', methods=['GET'])
+def api_admin_search_users():
+    """4. Consultar Usuario desde el Panel Administrativo Online."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    if session.get('role') not in ('admin', 'superadmin'):
+        return jsonify({'success': False, 'message': 'Acceso denegado. Se requiere rol Administrador.'}), 403
+
+    q = (request.args.get('q') or '').strip()
+    rows = db_manager.admin_search_users(q)
+    users = [
+        {'id': u[0], 'username': u[1], 'email': u[2], 'phone': u[3], 'role': str(u[4]).upper()}
+        for u in rows
+    ]
+    if session.get('user_id'):
+        db_manager.log_activity(session['user_id'], "Admin Consultar Usuario Web", f"Busqueda: '{q or 'TODOS'}' ({len(users)} resultados)")
+    return jsonify({'success': True, 'users': users, 'count': len(users)})
+
+# ==============================================================================
+# ENDPOINTS EXCLUSIVOS DE MANTENIMIENTO (SUPERUSUARIO PROGRAMADOR - PUNTO 7)
+# ==============================================================================
+
+@app.route('/api/maintenance/action', methods=['POST'])
+def api_maintenance_action():
+    """Ejecuta acciones técnicas del Módulo de Mantenimiento exclusivo para el Programador."""
+    if not db_manager:
+        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    if session.get('role') != 'superadmin':
+        return jsonify({'success': False, 'message': 'Acceso exclusivo para el Superusuario del Programador.'}), 403
+
+    data = request.get_json(silent=True) or {}
+    action = (data.get('action') or 'diagnostics').strip()
+
+    if action == 'backup':
+        ok, path = db_manager.backup_database()
+        if session.get('user_id'):
+            db_manager.log_activity(session['user_id'], "Mantenimiento Backup Web", os.path.basename(path))
+        return jsonify({'success': ok, 'message': f'Copia de seguridad creada en: {path}', 'diagnostics': db_manager.run_maintenance_diagnostics()})
+    elif action == 'unlock_accounts':
+        ok, msg = db_manager.unlock_all_accounts()
+        if session.get('user_id'):
+            db_manager.log_activity(session['user_id'], "Mantenimiento Desbloqueo Web", msg)
+        return jsonify({'success': ok, 'message': msg, 'diagnostics': db_manager.run_maintenance_diagnostics()})
+    elif action == 'clean_logs':
+        ok, msg = db_manager.clear_old_activity_logs()
+        if session.get('user_id'):
+            db_manager.log_activity(session['user_id'], "Mantenimiento Auditoria Web", msg)
+        return jsonify({'success': ok, 'message': msg, 'diagnostics': db_manager.run_maintenance_diagnostics()})
+    elif action == 'verify_engine':
+        ok_mod, mod_msg, _ = GlassSheet.validate_sheet_dimensions(20, 20)
+        return jsonify({
+            'success': ok_mod,
+            'message': f'Verificacion Tecnica del Motor de Corte y Red Neuronal: {mod_msg} | Arquitectura IA Dense 5->16->16->3 Operativa.',
+            'diagnostics': db_manager.run_maintenance_diagnostics()
+        })
+    else:
+        diag = db_manager.run_maintenance_diagnostics()
+        return jsonify({
+            'success': True,
+            'message': f"Diagnostico SQLite: {diag.get('integrity')} | Tamano BD: {diag.get('db_size_kb')} KB | Motor de Corte Activo.",
+            'diagnostics': diag
+        })
+
+@app.route('/api/validate-sheet', methods=['POST'])
+def api_validate_sheet():
+    """Valida el tamaño de la Lámina Madre."""
+    data = request.get_json(silent=True) or {}
+    w = data.get('sheet_width')
+    h = data.get('sheet_height')
+    ok, msg, unit_lbl = GlassSheet.validate_sheet_dimensions(w, h)
+    if not ok:
+        return jsonify({'success': False, 'message': msg}), 400
+    w_int, h_int = int(str(w or 0)), int(str(h or 0))
+    if (w_int <= 20 and h_int >= 100) or (h_int <= 20 and w_int >= 100):
+        return jsonify({
+            'success': False,
+            'message': 'El ancho y el alto de la lamina deben estar en la misma escala de medida.'
+        }), 400
+    return jsonify({'success': True, 'message': msg, 'sheet_width': w_int, 'sheet_height': h_int, 'unit': unit_lbl})
 
 # ==============================================================================
 # ENDPOINT DE PROCESAMIENTO MÓVIL (OpenCV + Red Neuronal + Bin Packing)
@@ -491,7 +668,15 @@ def scan_and_optimize():
             sheet_width = int(request.form.get('sheet_width', 2000))
             sheet_height = int(request.form.get('sheet_height', 2000))
         except ValueError:
-            sheet_width, sheet_height = 2000, 2000
+            return jsonify({
+                'success': False,
+                'message': 'Error: Las dimensiones de la Lamina Madre deben ser valores numericos validos.'
+            }), 400
+
+        # Validar tamaño de la Lámina Madre
+        valid_mod, mod_msg, unit_lbl = GlassSheet.validate_sheet_dimensions(sheet_width, sheet_height)
+        if not valid_mod:
+            return jsonify({'success': False, 'message': mod_msg}), 400
 
         orders_raw = request.form.get('orders')
         orders = []
@@ -502,11 +687,28 @@ def scan_and_optimize():
                 logger.warning(f"Error decodificando lista de pedidos JSON: {e}")
 
         if not orders:
+            p1_w = max(1, int(sheet_width * 0.3))
+            p1_h = max(1, int(sheet_height * 0.25))
             orders = [
-                {'id': 'Corte-A1', 'w': 600, 'h': 500},
-                {'id': 'Corte-A2', 'w': 500, 'h': 400},
-                {'id': 'Corte-B1', 'w': 700, 'h': 450}
+                {'id': 'Corte-A1', 'w': p1_w, 'h': p1_h},
+                {'id': 'Corte-A2', 'w': max(1, int(sheet_width * 0.25)), 'h': max(1, int(sheet_height * 0.2))},
             ]
+
+        # Validar que ningún pedido de corte supere las dimensiones de la Lámina Madre configurada
+        for ord_p in orders:
+            pw = int(ord_p.get('w', 0))
+            ph = int(ord_p.get('h', 0))
+            pid = ord_p.get('id', 'Pieza')
+            if pw <= 0 or ph <= 0:
+                return jsonify({
+                    'success': False,
+                    'message': f'Error en {pid}: Las medidas del corte ({pw}x{ph}) deben ser mayores a cero.'
+                }), 400
+            if pw > sheet_width or ph > sheet_height:
+                return jsonify({
+                    'success': False,
+                    'message': f'Error de Medida en {pid}: El corte ({pw}x{ph} {unit_lbl}) supera las dimensiones de la Lamina Madre configurada ({sheet_width}x{sheet_height} {unit_lbl}).'
+                }), 400
 
         # Ejecutar Pipeline en vision.py (incluye validación óptica de lámina de vidrio)
         result = process_glass_sheet(

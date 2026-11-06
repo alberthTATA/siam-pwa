@@ -9,6 +9,7 @@ import os
 import cv2
 import base64
 import numpy as np
+from typing import Any
 
 from src.vision.canny_detector import DefectDetector
 from src.vision.feature_extractor import FeatureExtractor
@@ -122,7 +123,7 @@ def optimize_image_memory(image, max_dim=1600):
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
     return image
 
-def process_glass_sheet(image_input, sheet_width=2000, sheet_height=2000, orders=None):
+def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height: int = 2000, orders: Any = None) -> dict[str, Any]:
     """
     Pipeline unificado de procesamiento para el servidor Flask:
     1. Carga u optimización de imagen en memoria.
@@ -173,7 +174,7 @@ def process_glass_sheet(image_input, sheet_width=2000, sheet_height=2000, orders
 
     # 3. Análisis de anomalías y Clasificación
     annotated_image = image.copy()
-    defect_info = {
+    defect_info: dict[str, Any] = {
         'detected': False,
         'type': 'Ninguno',
         'confidence': 100.0,
@@ -203,14 +204,14 @@ def process_glass_sheet(image_input, sheet_width=2000, sheet_height=2000, orders
             defect_info['area'] = float(area)
             defect_info['perimeter'] = float(perimeter)
             defect_info['circularity'] = float(circularity)
-            defect_info['bbox'] = {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
+            defect_info['bbox'] = {'x': x, 'y': y, 'w': w, 'h': h}
 
             # Clasificación mediante Red Neuronal o Heurística Morfológica
             nn_model, norm_max = get_neural_network()
             classes = ["Burbuja", "Rayón", "Rotura"]
 
             if nn_model is not None and norm_max is not None:
-                features_norm = features / norm_max
+                features_norm = np.asarray(features, dtype=float) / norm_max
                 output = nn_model.forward(np.array([features_norm]))
                 class_idx = int(np.argmax(output[0]))
                 confidence = float(output[0][class_idx] * 100.0)
@@ -252,24 +253,25 @@ def process_glass_sheet(image_input, sheet_width=2000, sheet_height=2000, orders
                 2
             )
 
-            # Mapear coordenadas de la imagen (píxeles) a coordenadas de la lámina física (milímetros)
-            scale_x_mm = float(sheet_width) / float(img_w)
-            scale_y_mm = float(sheet_height) / float(img_h)
+            # Mapear coordenadas de la imagen (píxeles) a coordenadas de la lámina física
+            scale_x_mm = sheet_width / img_w
+            scale_y_mm = sheet_height / img_h
+            min_def_margin = max(1, int(min(sheet_width, sheet_height) * 0.05))
 
             defect_coords_mm = {
                 'x': int(x * scale_x_mm),
                 'y': int(y * scale_y_mm),
-                'w': max(80, int(w * scale_x_mm)),  # Margen de seguridad mínimo de 80mm
-                'h': max(80, int(h * scale_y_mm))
+                'w': max(min_def_margin, int(w * scale_x_mm)),
+                'h': max(min_def_margin, int(h * scale_y_mm))
             }
 
     # 4. Codificar imagen anotada a Base64 para entrega directa en JSON
-    _, buffer = cv2.imencode('.jpg', annotated_image, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-    image_base64 = base64.b64encode(buffer).decode('utf-8')
+    _, buffer = cv2.imencode('.jpg', annotated_image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    image_base64 = base64.b64encode(buffer.tobytes()).decode('utf-8')
     image_data_url = f"data:image/jpeg;base64,{image_base64}"
 
     # 5. Optimización de Corte 2D (Bin Packing FFD con evitación de obstáculos)
-    sheet = GlassSheet(width=sheet_width, height=sheet_height, resolution=10)
+    sheet = GlassSheet(width=sheet_width, height=sheet_height)
 
     if defect_info['detected']:
         sheet.add_defect(
