@@ -38,6 +38,27 @@
             display: block;
         }
     </style>
+    <script>
+        window.togglePasswordVisibility = function(inputId, btn) {
+            var input = document.getElementById(inputId);
+            if (!input) return;
+            if (input.type === 'password') {
+                input.type = 'text';
+                if (btn) btn.textContent = 'Ocultar';
+            } else {
+                input.type = 'password';
+                if (btn) btn.textContent = 'Ver';
+            }
+        };
+        if ('serviceWorker' in navigator && !sessionStorage.getItem('siam_sw_v2_cleaned')) {
+            caches.keys().then(function(names) {
+                for (let name of names) {
+                    if (name.indexOf('v1.0.0') !== -1) caches.delete(name);
+                }
+            });
+            sessionStorage.setItem('siam_sw_v2_cleaned', '1');
+        }
+    </script>
     <div id="authOverlay" class="{% if logged_user %}d-none{% else %}d-flex{% endif %} align-items-center justify-content-center p-3" style="position:fixed;inset:0;background:rgba(11,14,20,0.96);z-index:2050;overflow-y:auto;">
         <div class="card border-0 shadow-lg my-auto" style="max-width:420px;width:100%;background:#0F1520;color:#E0E6ED;border:1px solid #1E293B !important;border-radius:12px;">
             <div class="card-body p-4">
@@ -59,7 +80,7 @@
                         <div class="input-group">
                             <input type="password" id="loginPassword" class="form-control siam-auth-input" placeholder="Ingresa tu contraseña">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('loginPassword', this)" title="Mostrar / Ocultar contraseña">
-                                👁️
+                                Ver
                             </button>
                         </div>
                     </div>
@@ -76,10 +97,10 @@
                         <div class="input-group">
                             <input type="password" id="loginAdminKey" class="form-control siam-auth-input" placeholder="Clave Especial de Administrador">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('loginAdminKey', this)" title="Mostrar / Ocultar clave">
-                                👁️
+                                Ver
                             </button>
                         </div>
-                        <small style="color:#94A3B8;font-size:11px;">Si desmarcas esta opción entrarás como Usuario normal (sin Panel Administrativo).</small>
+                        <small style="color:#94A3B8;font-size:11px;">Nota: Solo usuarios registrados con rol Administrador pueden usar esta opción.</small>
                     </div>
 
                     <div class="text-end mb-3">
@@ -108,7 +129,7 @@
                     </div>
                     <div class="mb-2">
                         <label class="siam-auth-label" for="regEmail">Correo Electrónico:</label>
-                        <input type="email" id="regEmail" class="form-control form-control-sm siam-auth-input" placeholder="Ej: juan@correo.com (requiere @)">
+                        <input type="email" id="regEmail" class="form-control form-control-sm siam-auth-input" placeholder="Ej: usuario@dominio.com (formato válido)">
                     </div>
                     <div class="mb-2">
                         <label class="siam-auth-label" for="regPhone">Teléfono:</label>
@@ -119,7 +140,7 @@
                         <div class="input-group input-group-sm">
                             <input type="password" id="regPassword" class="form-control siam-auth-input" placeholder="••••••••">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('regPassword', this)" title="Mostrar / Ocultar contraseña">
-                                👁️
+                                Ver
                             </button>
                         </div>
                     </div>
@@ -137,7 +158,7 @@
                         <div class="input-group input-group-sm">
                             <input type="password" id="regAdminKey" class="form-control siam-auth-input" placeholder="Clave secreta de Administrador">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('regAdminKey', this)" title="Mostrar / Ocultar clave">
-                                👁️
+                                Ver
                             </button>
                         </div>
                     </div>
@@ -161,7 +182,7 @@
 
                 <!-- ==================== 3. VISTA RECUPERAR CONTRASEÑA ==================== -->
                 <div id="forgotBox" class="d-none">
-                    <h5 class="text-center fw-bold mb-2" style="color:#1A73E8;">🔐 Recuperar Contraseña</h5>
+                    <h5 class="text-center fw-bold mb-2" style="color:#1A73E8;">Recuperar Contraseña</h5>
                     <p class="text-center small mb-3" style="color:#94A3B8;font-size:12px;">
                         Ingresa tu usuario o correo electrónico registrado para generar tu código de seguridad de 6 dígitos.
                     </p>
@@ -173,7 +194,7 @@
                         </div>
                         <div class="d-grid gap-2">
                             <button type="button" id="btnForgotSendCode" class="btn btn-primary btn-sm fw-bold py-2" style="background:#1A73E8;border:none;">
-                                📧 Enviar Código de Verificación
+                                Enviar Código de Verificación
                             </button>
                         </div>
                     </div>
@@ -188,26 +209,26 @@
                             <label class="siam-auth-label" for="forgotNewPassword">Nueva Contraseña:</label>
                             <div class="input-group input-group-sm">
                                 <input type="password" id="forgotNewPassword" class="form-control siam-auth-input" placeholder="Mín. 8 caract, mayús, núm, símb.">
-                                <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('forgotNewPassword', this)">👁️</button>
+                                <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('forgotNewPassword', this)">Ver</button>
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="siam-auth-label" for="forgotConfPassword">Confirmar Nueva Contraseña:</label>
                             <div class="input-group input-group-sm">
                                 <input type="password" id="forgotConfPassword" class="form-control siam-auth-input" placeholder="Repite la nueva contraseña">
-                                <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('forgotConfPassword', this)">👁️</button>
+                                <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('forgotConfPassword', this)">Ver</button>
                             </div>
                         </div>
                         <div class="d-grid gap-2">
                             <button type="button" id="btnForgotSubmitReset" class="btn btn-success btn-sm fw-bold py-2">
-                                🔒 Restablecer Contraseña
+                                Restablecer Contraseña
                             </button>
                         </div>
                     </div>
 
                     <div class="d-grid mt-2">
                         <button type="button" id="btnBackFromForgot" class="btn btn-outline-secondary btn-sm text-light" style="border-color:#1E293B;">
-                            ⬅️ Volver al Inicio de Sesión
+                            Volver al Inicio de Sesión
                         </button>
                     </div>
                 </div>
@@ -225,26 +246,57 @@
             </div>
         </div>
         <div class="d-flex gap-2">
-            <button id="btnInstallPwa" class="btn btn-sm btn-light fw-bold text-primary">Instalar</button>
-            <button id="btnDismissInstall" class="btn btn-sm btn-outline-light"><i class="bi bi-x"></i></button>
+            <button id="btnInstallPwa" class="btn btn-sm btn-light fw-bold text-primary" type="button">Instalar</button>
+            <button id="btnDismissInstall" class="btn btn-sm btn-outline-light" type="button" title="Cerrar aviso de instalación" aria-label="Cerrar aviso de instalación"><i class="bi bi-x"></i></button>
         </div>
     </div>
 
-    <!-- PESTAÑAS PRINCIPALES DE NAVEGACIÓN (Paridad con SIAM_Local) -->
-    <ul class="nav nav-pills nav-fill mb-3 bg-white p-2 rounded shadow-sm border" id="siamMainTabs" role="tablist">
+    <!-- BARRA ORGANIZADA CON DOS MENÚS DESPLEGABLES (Módulos y Funciones del Módulo) -->
+    <div class="siam-card mb-3 p-3" style="background:#0F1520;border:1px solid #1E293B;color:#E2E8F0;">
+        <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-5">
+                <label class="form-label small fw-bold mb-1" style="color:#38BDF8;" for="moduleDropdown">1. Módulo del Sistema:</label>
+                <select id="moduleDropdown" class="form-select form-select-sm siam-auth-input fw-bold">
+                    <option value="vision">1. Visión y Clasificación IA / Optimización de Corte 2D</option>
+                    <option value="traceability">2. Trazabilidad y Dashboard de Defectos</option>
+                    <option value="admin" id="optModuleAdmin" class="{% if logged_role not in ['admin', 'superadmin'] %}d-none{% endif %}">3. Panel Administrador</option>
+                    <option value="maintenance" id="optModuleMaintenance" class="{% if logged_role != 'superadmin' %}d-none{% endif %}">4. Mantenimiento del Sistema (Superusuario)</option>
+                </select>
+            </div>
+            <div class="col-8 col-md-5">
+                <label class="form-label small fw-bold mb-1" style="color:#38BDF8;" for="functionDropdown">2. Funciones del Módulo:</label>
+                <select id="functionDropdown" class="form-select form-select-sm siam-auth-input">
+                    <option value="">-- Seleccione una función del módulo --</option>
+                </select>
+            </div>
+            <div class="col-4 col-md-2 d-grid">
+                <button type="button" id="btnExecModuleFunction" class="btn btn-sm btn-primary fw-bold py-2" style="background:#1A73E8;border:none;">
+                    Ejecutar Función
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PESTAÑAS INTERNAS OCULTAS (Controladas por el Menú Desplegable de Módulos) -->
+    <ul class="nav nav-pills nav-fill mb-3 bg-white p-2 rounded shadow-sm border d-none" id="siamMainTabs" role="tablist">
         <li class="nav-item" role="presentation">
             <button class="nav-link active fw-bold small" id="tab-vision-btn" data-bs-toggle="pill" data-bs-target="#pane-vision" type="button" role="tab">
-                <i class="bi bi-camera-fill"></i> 1. Visión IA & Corte 2D
+                1. Visión IA & Corte 2D
             </button>
         </li>
         <li class="nav-item" role="presentation">
             <button class="nav-link fw-bold small" id="tab-traceability-btn" data-bs-toggle="pill" data-bs-target="#pane-traceability" type="button" role="tab">
-                <i class="bi bi-database-fill-check"></i> 2. Trazabilidad & Dashboard
+                2. Trazabilidad & Dashboard
             </button>
         </li>
-        <li class="nav-item {% if logged_role != 'admin' %}d-none{% endif %}" id="navAdminTabItem" role="presentation">
+        <li class="nav-item {% if logged_role not in ['admin', 'superadmin'] %}d-none{% endif %}" id="navAdminTabItem" role="presentation">
             <button class="nav-link fw-bold small" id="tab-admin-btn" data-bs-toggle="pill" data-bs-target="#pane-admin" type="button" role="tab">
-                <i class="bi bi-shield-shaded"></i> 3. Panel Administrador
+                3. Panel Administrador
+            </button>
+        </li>
+        <li class="nav-item {% if logged_role != 'superadmin' %}d-none{% endif %}" id="navMaintenanceTabItem" role="presentation">
+            <button class="nav-link fw-bold small" id="tab-maintenance-btn" data-bs-toggle="pill" data-bs-target="#pane-maintenance" type="button" role="tab">
+                4. Mantenimiento del Sistema
             </button>
         </li>
     </ul>
@@ -257,7 +309,7 @@
                 <!-- Tarjeta: Captura Móvil de la Lámina -->
                 <div class="siam-card">
                     <div class="card-header-siam">
-                        <span><i class="bi bi-camera-fill text-primary"></i> 1. Captura de la Lámina de Vidrio</span>
+                        <span>1. Captura de la Lámina de Vidrio</span>
                         <span class="badge bg-secondary">Validación Óptica Activa</span>
                     </div>
                     <div class="card-body p-3">
@@ -270,17 +322,16 @@
 
                         <div class="d-grid gap-2 mb-3">
                             <button type="button" id="btnTriggerCamera" class="btn btn-touch btn-camera-trigger">
-                                <i class="bi bi-camera-fill fs-5"></i> Capturar Lámina con Cámara
+                                Capturar Lámina con Cámara
                             </button>
                             
                             <button type="button" id="btnTriggerGallery" class="btn btn-touch btn-outline-secondary">
-                                <i class="bi bi-image fs-5"></i> Seleccionar Imagen de Lámina
+                                Seleccionar Imagen de Lámina
                             </button>
                         </div>
 
                         <div class="preview-container" id="previewContainer">
                             <div id="previewPlaceholder" class="preview-placeholder">
-                                <i class="bi bi-camera"></i>
                                 <span>No hay lámina capturada aún.<br>Presiona el botón de la cámara o selecciona un archivo.</span>
                             </div>
                             <img id="previewImage" src="" alt="Previsualización de lámina" class="d-none">
@@ -289,19 +340,35 @@
                         <div class="mt-2 text-center">
                             <span id="fileInfoText" class="text-muted small">Ningún archivo seleccionado</span>
                         </div>
+                    </div>
+                </div>
 
-                        <div class="row g-2 mt-3 pt-2 border-top">
-                            <div class="col" id="colSheetWidth">
-                                <label class="form-label small fw-bold text-muted">Ancho Lámina (mm)</label>
-                                <input type="number" id="sheetWidth" name="sheet_width" class="form-control" value="2000" min="500" max="6000" step="50">
+                <!-- Tarjeta: Paso 1 Obligatorio - Tamaño de la Lámina Madre -->
+                <div class="siam-card">
+                    <div class="card-header-siam">
+                        <span>2. Tamaño de la Lámina Madre (Paso 1)</span>
+                    </div>
+                    <div class="card-body p-3">
+                        <p class="text-muted small mb-2">
+                            Primero ingrese y valide el tamaño de la Lámina Madre antes de ingresar las medidas de corte. Si intenta agregar un corte sin fijar la lámina o con medidas mayores a la lámina, el sistema emitirá un error.
+                        </p>
+                        <div class="row g-2 align-items-end">
+                            <div class="col-6 col-md-4" id="colSheetWidth">
+                                <label class="form-label small fw-bold text-muted" for="sheetWidth">Ancho Lámina Madre</label>
+                                <input type="number" id="sheetWidth" name="sheet_width" class="form-control" value="2000" min="1" max="2000" step="1" title="Ancho de la Lámina Madre">
                             </div>
-                            <div class="col" id="colSheetHeight">
-                                <label class="form-label small fw-bold text-muted">Alto Lámina (mm)</label>
-                                <input type="number" id="sheetHeight" name="sheet_height" class="form-control" value="2000" min="500" max="6000" step="50">
+                            <div class="col-6 col-md-4" id="colSheetHeight">
+                                <label class="form-label small fw-bold text-muted" for="sheetHeight">Alto Lámina Madre</label>
+                                <input type="number" id="sheetHeight" name="sheet_height" class="form-control" value="2000" min="1" max="2000" step="1" title="Alto de la Lámina Madre">
                             </div>
-                            <div class="col-4 {% if logged_role != 'admin' %}d-none{% endif %}" id="adminPricePerM2Col">
-                                <label class="form-label small fw-bold text-success">Costo ($ USD / m²)</label>
-                                <input type="number" id="pricePerM2" class="form-control fw-bold text-success" value="25" min="1" max="500" step="0.5">
+                            <div class="col-12 col-md-4 {% if logged_role not in ['admin', 'superadmin'] %}d-none{% endif %}" id="adminPricePerM2Col">
+                                <label class="form-label small fw-bold text-success" for="pricePerM2">Costo (USD / m²)</label>
+                                <input type="number" id="pricePerM2" class="form-control fw-bold text-success" value="25" min="1" max="500" step="0.5" title="Costo en USD por metro cuadrado">
+                            </div>
+                            <div class="col-12 mt-2">
+                                <button type="button" id="btnConfirmSheetSize" class="btn btn-sm btn-primary fw-bold w-100 py-2">
+                                    1. Validar y Fijar Tamaño de Lámina Madre
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -310,35 +377,35 @@
                 <!-- Tarjeta: Pedidos de Corte Solicitados -->
                 <div class="siam-card" id="pedidosSection">
                     <div class="card-header-siam">
-                        <span><i class="bi bi-scissors text-primary"></i> 2. Pedidos de Corte a Optimizar</span>
+                        <span>3. Pedidos de Corte a Optimizar (Paso 2 - Medidas de Piezas)</span>
                         <span class="badge bg-primary">Motor 2D FFD</span>
                     </div>
                     <div class="card-body p-3">
                         <p class="text-muted small mb-2">
-                            Ingresa las piezas solicitadas por los clientes que deben acomodarse esquivando las zonas defectuosas.
+                            Una vez fijado el tamaño de la Lámina Madre, ingrese las piezas solicitadas. Ninguna pieza puede superar el Ancho o Alto de la lámina configurada.
                         </p>
 
                         <div class="row g-2 align-items-end mb-3">
                             <div class="col-4">
-                                <label class="form-label small fw-bold text-muted">Ancho (mm)</label>
-                                <input type="number" id="orderWidth" class="form-control" value="500" min="50" max="3000" step="10">
+                                <label class="form-label small fw-bold text-muted" for="orderWidth">Ancho Pieza</label>
+                                <input type="number" id="orderWidth" class="form-control" value="500" min="1" max="2000" step="1" title="Ancho de la pieza a cortar">
                             </div>
                             <div class="col-4">
-                                <label class="form-label small fw-bold text-muted">Alto (mm)</label>
-                                <input type="number" id="orderHeight" class="form-control" value="400" min="50" max="3000" step="10">
+                                <label class="form-label small fw-bold text-muted" for="orderHeight">Alto Pieza</label>
+                                <input type="number" id="orderHeight" class="form-control" value="400" min="1" max="2000" step="1" title="Alto de la pieza a cortar">
                             </div>
                             <div class="col-4">
-                                <label class="form-label small fw-bold text-muted">Identificador</label>
-                                <input type="text" id="orderId" class="form-control" placeholder="Ej: Mesa-1">
+                                <label class="form-label small fw-bold text-muted" for="orderId">Identificador</label>
+                                <input type="text" id="orderId" class="form-control" placeholder="Ej: Corte-1" title="Identificador de la pieza">
                             </div>
                             <div class="col-8 mt-2">
-                                <button type="button" id="btnAddOrder" class="btn btn-sm btn-outline-primary w-100">
-                                    <i class="bi bi-plus-circle"></i> Agregar Pieza a la Lista
+                                <button type="button" id="btnAddOrder" class="btn btn-sm btn-outline-primary w-100 fw-bold">
+                                    2. Agregar Pieza de Corte a la Lista
                                 </button>
                             </div>
                             <div class="col-4 mt-2">
                                 <button type="button" id="btnRefreshOrders" class="btn btn-sm btn-outline-secondary w-100">
-                                    🔄 Refrescar
+                                    Limpiar / Reiniciar
                                 </button>
                             </div>
                         </div>
@@ -361,7 +428,7 @@
 
                 <div class="d-grid mb-4">
                     <button type="submit" id="btnProcessImage" class="btn btn-touch btn-primary-siam fs-5 py-3 shadow" disabled>
-                        <i class="bi bi-cpu-fill"></i> Analizar Lámina (Canny + IA) & Optimizar Cortes
+                        3. Analizar Lámina (Canny + IA) y Optimizar Cortes
                     </button>
                 </div>
 
@@ -371,8 +438,8 @@
             <div id="resultsSection" class="d-none">
                 <div class="siam-card">
                     <div class="card-header-siam">
-                        <span><i class="bi bi-shield-check text-success"></i> 3. Diagnóstico IA & Control de Calidad</span>
-                        <span id="resultQcBadge" class="qc-badge qc-esperando">⚪ ESPERANDO</span>
+                        <span>4. Diagnóstico IA y Control de Calidad</span>
+                        <span id="resultQcBadge" class="qc-badge qc-esperando">ESPERANDO</span>
                     </div>
                     <div class="card-body p-3">
                         <div class="row g-3">
@@ -403,7 +470,7 @@
                         </div>
 
                         <div class="alert alert-light border mt-3 mb-2 p-3">
-                            <strong class="d-block mb-1 text-dark"><i class="bi bi-info-circle text-primary"></i> Criterio Técnico Industrial:</strong>
+                            <strong class="d-block mb-1 text-dark">Criterio Técnico Industrial:</strong>
                             <span id="resultRecommendation" class="text-muted small">Cargue una lámina para visualizar el criterio de inspección.</span>
                         </div>
 
@@ -419,7 +486,7 @@
                 <!-- Tarjeta: Plano de Corte Optimizado 2D -->
                 <div class="siam-card">
                     <div class="card-header-siam">
-                        <span><i class="bi bi-grid-3x3-gap-fill text-primary"></i> 4. Plano de Corte 2D Optimizado</span>
+                        <span>5. Plano de Corte 2D Optimizado</span>
                         <span class="badge bg-success" id="badgeProcessTime">Algoritmo FFD</span>
                     </div>
                     <div class="card-body p-3">
@@ -448,7 +515,7 @@
                 <!-- Tarjeta: Métricas de Aprovechamiento y Merma -->
                 <div class="siam-card">
                     <div class="card-header-siam">
-                        <span><i class="bi bi-bar-chart-fill text-primary"></i> 5. Indicadores de Aprovechamiento (KPIs)</span>
+                        <span>6. Indicadores de Aprovechamiento (KPIs)</span>
                     </div>
                     <div class="card-body p-3">
                         <div class="row g-2">
@@ -478,8 +545,8 @@
                             </div>
                         </div>
 
-                        <div id="adminEconomicUsdBanner" class="alert alert-success border-success mt-3 mb-0 py-2 px-3 {% if logged_role == 'admin' %}d-flex{% else %}d-none{% endif %} align-items-center justify-content-between flex-wrap gap-2">
-                            <span class="fw-bold small"><i class="bi bi-cash-coin"></i> 💰 Impacto Económico y Ahorro Estimado ($ USD - Vista Admin):</span>
+                        <div id="adminEconomicUsdBanner" class="alert alert-success border-success mt-3 mb-0 py-2 px-3 {% if logged_role in ['admin', 'superadmin'] %}d-flex{% else %}d-none{% endif %} align-items-center justify-content-between flex-wrap gap-2">
+                            <span class="fw-bold small">Impacto Económico y Ahorro Estimado (USD - Vista Admin):</span>
                             <span id="kpiEconomicUsd" class="fw-bold fs-6 text-success">$0.00 USD aprovechados</span>
                         </div>
                     </div>
@@ -491,9 +558,9 @@
         <div class="tab-pane fade" id="pane-traceability" role="tabpanel">
             <div class="siam-card">
                 <div class="card-header-siam">
-                    <span><i class="bi bi-graph-up-arrow text-primary"></i> Resumen Estadístico de Defectos (Dashboard BD)</span>
+                    <span>Resumen Estadístico de Defectos (Dashboard BD)</span>
                     <button type="button" id="btnRefreshTraceability" class="btn btn-sm btn-success">
-                        <i class="bi bi-arrow-clockwise"></i> Actualizar Datos
+                        Actualizar Datos
                     </button>
                 </div>
                 <div class="card-body p-3">
@@ -541,16 +608,51 @@
             </div>
         </div>
 
-        <!-- ==================== PESTAÑA 3: PANEL ADMINISTRADOR (SOLO CON CLAVE ESPECIAL) ==================== -->
+        <!-- ==================== PESTAÑA 3: PANEL ADMINISTRADOR ==================== -->
         <div class="tab-pane fade" id="pane-admin" role="tabpanel">
             <div class="siam-card">
                 <div class="card-header-siam">
-                    <span><i class="bi bi-shield-lock-fill text-primary"></i> Panel Administrativo - Gestión de Usuarios y Auditoría</span>
+                    <span>Panel Administrativo - Gestión de Usuarios y Auditoría</span>
                     <button type="button" id="btnRefreshAdmin" class="btn btn-sm btn-primary">
-                        <i class="bi bi-arrow-clockwise"></i> Refrescar Panel
+                        Refrescar Panel
                     </button>
                 </div>
                 <div class="card-body p-3">
+                    <!-- 4 Botones de Gestión de Usuarios solicitados en Corrección #3 -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-md-3 d-grid">
+                            <button type="button" id="btnAdminAddUser" class="btn btn-sm btn-success fw-bold py-2">
+                                1. Agregar Usuario
+                            </button>
+                        </div>
+                        <div class="col-6 col-md-3 d-grid">
+                            <button type="button" id="btnAdminEditUser" class="btn btn-sm btn-primary fw-bold py-2">
+                                2. Modificar Usuario
+                            </button>
+                        </div>
+                        <div class="col-6 col-md-3 d-grid">
+                            <button type="button" id="btnAdminDeleteUser" class="btn btn-sm btn-danger fw-bold py-2">
+                                3. Eliminar Usuario
+                            </button>
+                        </div>
+                        <div class="col-6 col-md-3 d-grid">
+                            <button type="button" id="btnAdminQueryUser" class="btn btn-sm btn-info text-dark fw-bold py-2">
+                                4. Consultar Usuario
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Panel Interactivo para las 4 Operaciones de Usuarios -->
+                    <div id="adminCrudBox" class="card border-primary mb-3 d-none">
+                        <div class="card-header bg-primary text-white py-2 d-flex justify-content-between align-items-center">
+                            <span id="adminCrudTitle" class="fw-bold small">Gestión de Usuario</span>
+                            <button type="button" id="btnCloseAdminCrud" class="btn btn-sm btn-light py-0 px-2">Cerrar</button>
+                        </div>
+                        <div class="card-body p-3" id="adminCrudBody"></div>
+                    </div>
+
+                    <div id="adminActionAlert" class="alert py-2 small d-none"></div>
+
                     <h6 class="fw-bold small text-primary mb-2">1. Usuarios Registrados en el Sistema:</h6>
                     <div class="table-responsive mb-4">
                         <table class="table table-sm table-bordered align-middle mb-0 small">
@@ -597,6 +699,79 @@
                             <tbody id="adminMetricsTableBody"></tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== PESTAÑA 4: MANTENIMIENTO DEL SISTEMA (SOLO SUPERUSUARIO PROGRAMADOR) ==================== -->
+        <div class="tab-pane fade" id="pane-maintenance" role="tabpanel">
+            <div class="siam-card">
+                <div class="card-header-siam">
+                    <span>Módulo de Mantenimiento del Sistema (Exclusivo Superusuario Programador)</span>
+                    <span class="badge bg-warning text-dark">SUPERADMIN</span>
+                </div>
+                <div class="card-body p-3">
+                    <p class="text-muted small mb-3">
+                        Herramientas técnicas avanzadas de diagnóstico, respaldo de base de datos SQLite, liberación de cuentas y verificación de integridad de los motores de corte e Inteligencia Artificial.
+                    </p>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-md-3">
+                            <div class="metric-box bg-light">
+                                <div class="metric-label">Integridad SQLite</div>
+                                <div id="maintIntegrity" class="metric-value text-success fs-6">OK</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="metric-box bg-light">
+                                <div class="metric-label">Tamaño BD (KB)</div>
+                                <div id="maintDbSize" class="metric-value text-primary fs-6">0 KB</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="metric-box bg-light">
+                                <div class="metric-label">Cuentas Bloqueadas</div>
+                                <div id="maintLocked" class="metric-value text-danger fs-6">0</div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="metric-box bg-light">
+                                <div class="metric-label">Logs Auditoría</div>
+                                <div id="maintLogsCount" class="metric-value text-dark fs-6">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-md-6 d-grid">
+                            <button type="button" class="btn btn-sm btn-primary fw-bold py-2" onclick="runMaintenanceTask('diagnostics')">
+                                1. Diagnóstico y Optimización SQLite (VACUUM)
+                            </button>
+                        </div>
+                        <div class="col-12 col-md-6 d-grid">
+                            <button type="button" class="btn btn-sm btn-success fw-bold py-2" onclick="runMaintenanceTask('backup')">
+                                2. Crear Respaldo de Base de Datos (.bak)
+                            </button>
+                        </div>
+                        <div class="col-12 col-md-6 d-grid">
+                            <button type="button" class="btn btn-sm btn-warning text-dark fw-bold py-2" onclick="runMaintenanceTask('unlock_accounts')">
+                                3. Desbloquear Todas las Cuentas de Usuarios
+                            </button>
+                        </div>
+                        <div class="col-12 col-md-6 d-grid">
+                            <button type="button" class="btn btn-sm btn-danger fw-bold py-2" onclick="runMaintenanceTask('clean_logs')">
+                                4. Depurar Historial de Auditoría Antiguo
+                            </button>
+                        </div>
+                        <div class="col-12 d-grid">
+                            <button type="button" class="btn btn-sm btn-info text-dark fw-bold py-2" onclick="runMaintenanceTask('verify_engine')">
+                                5. Verificar Motor de Corte y Red Neuronal
+                            </button>
+                        </div>
+                    </div>
+
+                    <label class="form-label small fw-bold text-muted">Consola Técnica del Programador:</label>
+                    <pre id="maintenanceConsole" class="p-3 rounded small mb-0" style="background:#0B0E14;color:#38BDF8;border:1px solid #1E293B;min-height:140px;white-space:pre-wrap;">Consola de Mantenimiento lista. Seleccione una operación técnica o use el menú desplegable de Funciones del Módulo.</pre>
                 </div>
             </div>
         </div>
