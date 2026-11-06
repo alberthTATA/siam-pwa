@@ -3,19 +3,50 @@ import numpy as np
 class GlassSheet:
     """
     Representación matemática de la lámina de vidrio mediante una cuadrícula (Grid 2D).
-    Esto nos permite discretizar el espacio y manejar la lógica de colisiones 
+    Esto nos permite discretizar el espacio en una matriz proporcional y manejar la lógica de colisiones 
     con las imperfecciones (defectos) detectadas por la visión artificial.
     """
-    def __init__(self, width, height, resolution=10):
-        # resolution = 10 significa que cada celda de la matriz equivale a 10x10 milímetros.
-        # Discretizar el grid acelera exponencialmente el algoritmo de búsqueda.
-        self.width = width
-        self.height = height
-        self.resolution = resolution
+    GRID_MODALITY = 20
+
+    @staticmethod
+    def validate_sheet_dimensions(width, height):
+        """
+        Valida que las dimensiones de la lámina estén dentro de los parámetros permitidos.
+        Retorna (es_valido, mensaje, unidad_etiqueta).
+        """
+        try:
+            w = int(width)
+            h = int(height)
+        except (ValueError, TypeError):
+            return False, "Las dimensiones de la lámina deben ser valores numéricos enteros.", ""
+
+        if w <= 0 or h <= 0:
+            return False, "El ancho y el alto de la lámina deben ser mayores a cero.", ""
+
+        if w <= 20 and h <= 20:
+            return True, f"Tamaño de lámina validado correctamente ({w} x {h}).", "u"
+
+        if (w < 100 or h < 100) and (w > 20 or h > 20):
+            return False, f"Medida de lámina inválida ({w} x {h}). Verifique las dimensiones ingresadas.", ""
+
+        if w > 2000 or h > 2000:
+            return False, f"Medida de lámina fuera del rango permitido ({w} x {h}).", ""
+
+        return True, f"Tamaño de lámina validado correctamente ({w} x {h} mm).", "mm"
+
+    def __init__(self, width, height, resolution=None):
+        self.width = int(width)
+        self.height = int(height)
+        if self.width <= 20 and self.height <= 20:
+            self.resolution = 1
+        elif resolution is not None:
+            self.resolution = max(1, int(resolution))
+        else:
+            self.resolution = max(1, int(min(self.width, self.height) / 200)) if min(self.width, self.height) >= 200 else 1
         
         # Grid booleano: 0 = Espacio Libre, 1 = Espacio Ocupado o Defectuoso
-        cols = int(width / resolution)
-        rows = int(height / resolution)
+        cols = max(1, int(np.ceil(self.width / self.resolution)))
+        rows = max(1, int(np.ceil(self.height / self.resolution)))
         self.grid = np.zeros((rows, cols), dtype=np.int8)
         
     def add_defect(self, x, y, w, h):
