@@ -585,16 +585,46 @@ function populateFunctionDropdown(moduleKey) {
 }
 
 function switchActiveModule(moduleKey) {
+    const rootRole = (document.getElementById('siamAppRoot')?.dataset?.role || '').toLowerCase();
+    const modSelect = document.getElementById('moduleDropdown');
+    if (moduleKey === 'maintenance' && rootRole !== 'superadmin') {
+        if (modSelect) modSelect.value = 'vision';
+        moduleKey = 'vision';
+    }
+    if (moduleKey === 'admin' && rootRole !== 'admin' && rootRole !== 'superadmin') {
+        if (modSelect) modSelect.value = 'vision';
+        moduleKey = 'vision';
+    }
     const tabMap = {
         vision: 'tab-vision-btn',
         traceability: 'tab-traceability-btn',
         admin: 'tab-admin-btn',
         maintenance: 'tab-maintenance-btn'
     };
+    const paneMap = {
+        vision: 'pane-vision',
+        traceability: 'pane-traceability',
+        admin: 'pane-admin',
+        maintenance: 'pane-maintenance'
+    };
     const btnId = tabMap[moduleKey];
     const tabBtn = btnId ? document.getElementById(btnId) : null;
     if (tabBtn) {
         tabBtn.click();
+    } else {
+        Object.entries(paneMap).forEach(([k, pId]) => {
+            const pEl = document.getElementById(pId);
+            if (!pEl) return;
+            if (k === moduleKey) {
+                pEl.classList.remove('d-none');
+                pEl.classList.add('show', 'active');
+            } else {
+                pEl.classList.remove('show', 'active');
+                if (k === 'maintenance' && rootRole !== 'superadmin') {
+                    pEl.classList.add('d-none');
+                }
+            }
+        });
     }
     populateFunctionDropdown(moduleKey);
     if (moduleKey === 'traceability' || moduleKey === 'admin' || moduleKey === 'maintenance') {
@@ -747,9 +777,71 @@ function initAuthAndTraceability() {
         authAlert.className = `alert py-2 small ${isSuccess ? 'alert-success' : 'alert-danger'}`;
     }
 
+    function syncRoleDropdownOptions(role) {
+        const cleanRole = (role || '').toLowerCase();
+        const isAdminOrSuper = (cleanRole === 'admin' || cleanRole === 'superadmin');
+        const isSuper = (cleanRole === 'superadmin');
+        const modSelect = document.getElementById('moduleDropdown');
+        const paneMaint = document.getElementById('pane-maintenance');
+        const paneAdmin = document.getElementById('pane-admin');
+
+        if (modSelect) {
+            let optAdmin = document.getElementById('optModuleAdmin');
+            if (isAdminOrSuper) {
+                if (!optAdmin) {
+                    optAdmin = document.createElement('option');
+                    optAdmin.value = 'admin';
+                    optAdmin.id = 'optModuleAdmin';
+                    optAdmin.textContent = '3. Panel Administrador';
+                    modSelect.appendChild(optAdmin);
+                }
+                optAdmin.classList.remove('d-none');
+            } else if (optAdmin) {
+                if (modSelect.value === 'admin') {
+                    modSelect.value = 'vision';
+                    switchActiveModule('vision');
+                }
+                optAdmin.remove();
+            }
+
+            let optMaint = document.getElementById('optModuleMaintenance');
+            if (isSuper) {
+                if (!optMaint) {
+                    optMaint = document.createElement('option');
+                    optMaint.value = 'maintenance';
+                    optMaint.id = 'optModuleMaintenance';
+                    optMaint.textContent = '4. Mantenimiento del Sistema (Superusuario)';
+                    modSelect.appendChild(optMaint);
+                }
+                optMaint.classList.remove('d-none');
+            } else if (optMaint) {
+                if (modSelect.value === 'maintenance') {
+                    modSelect.value = 'vision';
+                    switchActiveModule('vision');
+                }
+                optMaint.remove();
+            }
+        }
+
+        if (paneMaint) {
+            paneMaint.classList.toggle('d-none', !isSuper);
+            if (!isSuper) paneMaint.classList.remove('show', 'active');
+        }
+        if (paneAdmin && !isAdminOrSuper) {
+            paneAdmin.classList.remove('show', 'active');
+        }
+    }
+
     function updateHeaderSession(username, role) {
-        const isAdminOrSuper = (role === 'admin' || role === 'superadmin');
-        const isSuper = (role === 'superadmin');
+        const cleanRole = (role || 'usuario').toLowerCase();
+        const isAdminOrSuper = (cleanRole === 'admin' || cleanRole === 'superadmin');
+        const isSuper = (cleanRole === 'superadmin');
+
+        if (root) {
+            root.dataset.user = username || '';
+            root.dataset.role = cleanRole;
+        }
+        syncRoleDropdownOptions(cleanRole);
 
         if (username) {
             if (authOverlay) {
@@ -757,7 +849,7 @@ function initAuthAndTraceability() {
                 authOverlay.classList.remove('d-flex');
             }
             if (navUserBadge) {
-                navUserBadge.textContent = `Usuario: ${username} (${(role || 'usuario').toUpperCase()})`;
+                navUserBadge.textContent = `Usuario: ${username} (${cleanRole.toUpperCase()})`;
                 navUserBadge.classList.remove('d-none');
             }
             if (btnLogout) btnLogout.classList.remove('d-none');
@@ -768,11 +860,6 @@ function initAuthAndTraceability() {
             if (navMaintenanceTabItem) {
                 navMaintenanceTabItem.classList.toggle('d-none', !isSuper);
             }
-
-            const optAdmin = document.getElementById('optModuleAdmin');
-            const optMaint = document.getElementById('optModuleMaintenance');
-            if (optAdmin) optAdmin.classList.toggle('d-none', !isAdminOrSuper);
-            if (optMaint) optMaint.classList.toggle('d-none', !isSuper);
 
             const adminPriceCol = document.getElementById('adminPricePerM2Col');
             const adminUsdBanner = document.getElementById('adminEconomicUsdBanner');
@@ -799,9 +886,11 @@ function initAuthAndTraceability() {
             if (btnLogout) btnLogout.classList.add('d-none');
             if (navAdminTabItem) navAdminTabItem.classList.add('d-none');
             if (navMaintenanceTabItem) navMaintenanceTabItem.classList.add('d-none');
+            syncRoleDropdownOptions('');
         }
     }
 
+    syncRoleDropdownOptions(root?.dataset?.role || '');
     if (root && root.dataset.user) {
         updateHeaderSession(root.dataset.user, root.dataset.role);
     }
@@ -896,23 +985,17 @@ function initAuthAndTraceability() {
     if (btnDoRegister) {
         btnDoRegister.addEventListener('click', async () => {
             const username = (document.getElementById('regUsername')?.value || '').trim();
-            const email = (document.getElementById('regEmail')?.value || '').trim();
             const phone = (document.getElementById('regPhone')?.value || '').trim();
             const password = (document.getElementById('regPassword')?.value || '').trim();
             const wants_admin = document.getElementById('regAdminCheck')?.checked || false;
             const admin_key = (document.getElementById('regAdminKey')?.value || '').trim();
 
-            if (!username || !email || !phone || !password) {
+            if (!username || !phone || !password) {
                 showAlert('Todos los campos son obligatorios.');
                 return;
             }
             if (username.length < 3) {
                 showAlert('El Nombre de Usuario debe tener al menos 3 caracteres.');
-                return;
-            }
-            const strictEmailRegex = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,12}$/;
-            if (!strictEmailRegex.test(email) || email.includes('..')) {
-                showAlert('Formato de correo electrónico inválido. Ejemplo válido: usuario@dominio.com');
                 return;
             }
             if (!/^\d{7,15}$/.test(phone)) {
@@ -928,7 +1011,7 @@ function initAuthAndTraceability() {
                 const res = await fetch('/api/auth/register', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, email, phone, password, wants_admin, admin_key })
+                    body: JSON.stringify({ username, phone, password, wants_admin, admin_key })
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) {
@@ -950,7 +1033,7 @@ function initAuthAndTraceability() {
         btnForgotSendCode.addEventListener('click', async () => {
             const identifier = (document.getElementById('forgotIdentifier')?.value || '').trim();
             if (!identifier) {
-                showAlert('Ingresa tu usuario o correo electrónico registrado.');
+                showAlert('Ingresa tu nombre de usuario o teléfono registrado.');
                 return;
             }
             try {
@@ -967,7 +1050,7 @@ function initAuthAndTraceability() {
                 forgotUserId = data.user_id;
                 const banner = document.getElementById('forgotInboxBanner');
                 if (banner) {
-                    banner.innerHTML = `[Bandeja de Seguridad SIAM]<br>Cuenta: ${data.email}<br>Código de Recuperación: <span class="text-warning">${data.code}</span>`;
+                    banner.innerHTML = `[Bandeja de Seguridad SIAM]<br>Usuario: ${data.username} | Tel: ${data.phone || ''}<br>Código de Recuperación: <span class="text-warning">${data.code}</span>`;
                 }
                 document.getElementById('forgotStep1')?.classList.add('d-none');
                 document.getElementById('forgotStep2')?.classList.remove('d-none');
@@ -1064,18 +1147,14 @@ window.openAdminCrudModal = function(mode) {
                     <input type="text" id="crudAddUsername" class="form-control form-control-sm" placeholder="Ej: operador1">
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label small fw-bold">Correo Electrónico:</label>
-                    <input type="email" id="crudAddEmail" class="form-control form-control-sm" placeholder="Ej: operador1@gmail.com">
-                </div>
-                <div class="col-md-4">
                     <label class="form-label small fw-bold">Teléfono:</label>
                     <input type="text" id="crudAddPhone" class="form-control form-control-sm" placeholder="Ej: 04121234567">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                     <label class="form-label small fw-bold">Contraseña:</label>
-                    <input type="password" id="crudAddPass" class="form-control form-control-sm" placeholder="Mín. 8 caract, Mayús, Núm, Símb">
+                    <input type="password" id="crudAddPass" class="form-control form-control-sm" placeholder="Mín. 6 caract.">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                     <label class="form-label small fw-bold">Rol en el Sistema:</label>
                     <select id="crudAddRole" class="form-select form-select-sm">
                         <option value="usuario">Usuario Normal (Operador)</option>
@@ -1091,7 +1170,7 @@ window.openAdminCrudModal = function(mode) {
         title.textContent = '2. Modificar Usuario Existente';
         const userOptions = cachedAdminUsers
             .filter(u => u.username !== 'programador')
-            .map(u => `<option value="${u.id}">ID ${u.id} - ${u.username} (${u.email}) [${u.role}]</option>`)
+            .map(u => `<option value="${u.id}">ID ${u.id} - ${u.username} (Tel: ${u.phone}) [${u.role}]</option>`)
             .join('');
         body.innerHTML = `
             <div class="row g-2">
@@ -1107,21 +1186,17 @@ window.openAdminCrudModal = function(mode) {
                     <input type="text" id="crudEditUsername" class="form-control form-control-sm">
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label small fw-bold">Nuevo Correo Electrónico:</label>
-                    <input type="email" id="crudEditEmail" class="form-control form-control-sm">
-                </div>
-                <div class="col-md-4">
                     <label class="form-label small fw-bold">Nuevo Teléfono:</label>
                     <input type="text" id="crudEditPhone" class="form-control form-control-sm">
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                     <label class="form-label small fw-bold">Rol:</label>
                     <select id="crudEditRole" class="form-select form-select-sm">
                         <option value="usuario">usuario</option>
                         <option value="admin">admin</option>
                     </select>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-6">
                     <label class="form-label small fw-bold">Nueva Contraseña (opcional):</label>
                     <input type="password" id="crudEditPass" class="form-control form-control-sm" placeholder="Dejar vacío para mantener">
                 </div>
@@ -1134,7 +1209,7 @@ window.openAdminCrudModal = function(mode) {
         title.textContent = '3. Eliminar Usuario del Sistema';
         const userOptions = cachedAdminUsers
             .filter(u => u.username !== 'programador')
-            .map(u => `<option value="${u.id}">ID ${u.id} - ${u.username} (${u.email}) [${u.role}]</option>`)
+            .map(u => `<option value="${u.id}">ID ${u.id} - ${u.username} (Tel: ${u.phone}) [${u.role}]</option>`)
             .join('');
         body.innerHTML = `
             <div class="row g-2">
@@ -1155,7 +1230,7 @@ window.openAdminCrudModal = function(mode) {
         body.innerHTML = `
             <div class="row g-2">
                 <div class="col-9">
-                    <input type="text" id="crudQueryInput" class="form-control form-control-sm" placeholder="Buscar por ID, nombre de usuario, correo, teléfono o rol...">
+                    <input type="text" id="crudQueryInput" class="form-control form-control-sm" placeholder="Buscar por ID, nombre de usuario, teléfono o rol...">
                 </div>
                 <div class="col-3 d-grid">
                     <button type="button" class="btn btn-sm btn-info text-dark fw-bold" onclick="submitAdminQueryUser()">Buscar</button>
@@ -1171,14 +1246,12 @@ window.fillAdminEditFields = function() {
     const user = cachedAdminUsers.find(u => u.id === idVal);
     if (!user) return;
     document.getElementById('crudEditUsername').value = user.username || '';
-    document.getElementById('crudEditEmail').value = user.email || '';
     document.getElementById('crudEditPhone').value = user.phone || '';
     document.getElementById('crudEditRole').value = (user.role || 'usuario').toLowerCase();
 };
 
 window.submitAdminAddUser = async function() {
     const username = (document.getElementById('crudAddUsername')?.value || '').trim();
-    const email = (document.getElementById('crudAddEmail')?.value || '').trim();
     const phone = (document.getElementById('crudAddPhone')?.value || '').trim();
     const password = (document.getElementById('crudAddPass')?.value || '').trim();
     const role = document.getElementById('crudAddRole')?.value || 'usuario';
@@ -1187,7 +1260,7 @@ window.submitAdminAddUser = async function() {
         const res = await fetch('/api/admin/users/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, email, phone, password, role })
+            body: JSON.stringify({ username, phone, password, role })
         });
         const data = await res.json();
         showAdminActionMessage(data.message, data.success);
@@ -1207,7 +1280,6 @@ window.submitAdminEditUser = async function() {
         return;
     }
     const username = (document.getElementById('crudEditUsername')?.value || '').trim();
-    const email = (document.getElementById('crudEditEmail')?.value || '').trim();
     const phone = (document.getElementById('crudEditPhone')?.value || '').trim();
     const role = document.getElementById('crudEditRole')?.value || 'usuario';
     const new_password = (document.getElementById('crudEditPass')?.value || '').trim();
@@ -1216,7 +1288,7 @@ window.submitAdminEditUser = async function() {
         const res = await fetch('/api/admin/users/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id, username, email, phone, role, new_password })
+            body: JSON.stringify({ user_id, username, phone, role, new_password })
         });
         const data = await res.json();
         showAdminActionMessage(data.message, data.success);
@@ -1271,18 +1343,15 @@ window.submitAdminQueryUser = async function() {
             <div class="table-responsive">
                 <table class="table table-sm table-bordered small mb-0">
                     <thead class="table-light">
-                        <tr><th>ID</th><th>Usuario</th><th>Correo</th><th>Teléfono</th><th>Rol</th><th>Intentos Fallidos</th><th>Creado</th></tr>
+                        <tr><th>ID</th><th>Usuario</th><th>Teléfono</th><th>Rol</th></tr>
                     </thead>
                     <tbody>
                         ${data.users.map(u => `
                             <tr>
                                 <td>${u.id}</td>
                                 <td class="fw-bold">${u.username}</td>
-                                <td>${u.email}</td>
                                 <td>${u.phone}</td>
                                 <td><span class="badge bg-secondary">${u.role}</span></td>
-                                <td>${u.failed_attempts}</td>
-                                <td>${u.created_at}</td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1366,7 +1435,6 @@ window.loadTraceabilityData = async function() {
                     <tr>
                         <td>${u.id}</td>
                         <td class="fw-bold">${u.username}</td>
-                        <td>${u.email}</td>
                         <td>${u.phone}</td>
                         <td><span class="badge ${u.role === 'ADMIN' || u.role === 'SUPERADMIN' ? 'bg-info text-dark' : 'bg-secondary'}">${u.role}</span></td>
                     </tr>

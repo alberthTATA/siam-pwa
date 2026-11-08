@@ -72,7 +72,7 @@
                 <!-- ==================== 1. VISTA LOGIN ==================== -->
                 <div id="loginBox">
                     <div class="mb-3">
-                        <label class="siam-auth-label" for="loginIdentifier">Nombre, Correo o Teléfono:</label>
+                        <label class="siam-auth-label" for="loginIdentifier">Nombre de Usuario o Teléfono:</label>
                         <input type="text" id="loginIdentifier" class="form-control siam-auth-input" placeholder="Ej: alberth19 o daniel12">
                     </div>
                     <div class="mb-2">
@@ -128,10 +128,6 @@
                         <input type="text" id="regUsername" class="form-control form-control-sm siam-auth-input" placeholder="Ej: juanperez (mín. 3 caract.)">
                     </div>
                     <div class="mb-2">
-                        <label class="siam-auth-label" for="regEmail">Correo Electrónico:</label>
-                        <input type="email" id="regEmail" class="form-control form-control-sm siam-auth-input" placeholder="Ej: usuario@dominio.com (formato válido)">
-                    </div>
-                    <div class="mb-2">
                         <label class="siam-auth-label" for="regPhone">Teléfono:</label>
                         <input type="text" id="regPhone" class="form-control form-control-sm siam-auth-input" placeholder="Ej: 04121234567 (solo números)">
                     </div>
@@ -163,13 +159,6 @@
                         </div>
                     </div>
 
-                    <!-- Paso de Verificación de Correo con Bandeja de Seguridad SIAM -->
-                    <div id="regOtpSection" class="d-none mt-2 p-2 rounded" style="background:#0c2340;border:1px dashed #0284C7;">
-                        <div id="regInboxBanner" class="text-center fw-bold mb-2" style="color:#38BDF8;font-size:13px;"></div>
-                        <label class="siam-auth-label text-center" for="regOtpInput">Introduce el código de 6 dígitos:</label>
-                        <input type="text" id="regOtpInput" maxlength="6" class="form-control form-control-sm siam-auth-input text-center fw-bold" style="font-size:18px;letter-spacing:6px;color:#38BDF8 !important;" placeholder="000000">
-                    </div>
-
                     <div class="d-grid gap-2 mt-3">
                         <button type="button" id="btnDoRegister" class="btn btn-primary btn-sm fw-bold py-2" style="background:#1A73E8;border:none;">
                             Completar Registro
@@ -184,17 +173,17 @@
                 <div id="forgotBox" class="d-none">
                     <h5 class="text-center fw-bold mb-2" style="color:#1A73E8;">Recuperar Contraseña</h5>
                     <p class="text-center small mb-3" style="color:#94A3B8;font-size:12px;">
-                        Ingresa tu usuario o correo electrónico registrado para generar tu código de seguridad de 6 dígitos.
+                        Ingresa tu nombre de usuario o número de teléfono registrado para generar tu código de seguridad de 6 dígitos.
                     </p>
 
                     <div id="forgotStep1">
                         <div class="mb-3">
-                            <label class="siam-auth-label" for="forgotIdentifier">Usuario o Correo Registrado:</label>
-                            <input type="text" id="forgotIdentifier" class="form-control form-control-sm siam-auth-input" placeholder="Ej: alberth19 o mi_correo@gmail.com">
+                            <label class="siam-auth-label" for="forgotIdentifier">Usuario o Teléfono Registrado:</label>
+                            <input type="text" id="forgotIdentifier" class="form-control form-control-sm siam-auth-input" placeholder="Ej: alberth19 o 04124321731">
                         </div>
                         <div class="d-grid gap-2">
                             <button type="button" id="btnForgotSendCode" class="btn btn-primary btn-sm fw-bold py-2" style="background:#1A73E8;border:none;">
-                                Enviar Código de Verificación
+                                Generar Código de Verificación
                             </button>
                         </div>
                     </div>
@@ -259,8 +248,12 @@
                 <select id="moduleDropdown" class="form-select form-select-sm siam-auth-input fw-bold">
                     <option value="vision">1. Visión y Clasificación IA / Optimización de Corte 2D</option>
                     <option value="traceability">2. Trazabilidad y Dashboard de Defectos</option>
-                    <option value="admin" id="optModuleAdmin" class="{% if logged_role not in ['admin', 'superadmin'] %}d-none{% endif %}">3. Panel Administrador</option>
-                    <option value="maintenance" id="optModuleMaintenance" class="{% if logged_role != 'superadmin' %}d-none{% endif %}">4. Mantenimiento del Sistema (Superusuario)</option>
+                    {% if logged_role in ['admin', 'superadmin'] %}
+                    <option value="admin" id="optModuleAdmin">3. Panel Administrador</option>
+                    {% endif %}
+                    {% if logged_role == 'superadmin' %}
+                    <option value="maintenance" id="optModuleMaintenance">4. Mantenimiento del Sistema (Superusuario)</option>
+                    {% endif %}
                 </select>
             </div>
             <div class="col-8 col-md-5">
@@ -289,16 +282,20 @@
                 2. Trazabilidad & Dashboard
             </button>
         </li>
-        <li class="nav-item {% if logged_role not in ['admin', 'superadmin'] %}d-none{% endif %}" id="navAdminTabItem" role="presentation">
+        {% if logged_role in ['admin', 'superadmin'] %}
+        <li class="nav-item" id="navAdminTabItem" role="presentation">
             <button class="nav-link fw-bold small" id="tab-admin-btn" data-bs-toggle="pill" data-bs-target="#pane-admin" type="button" role="tab">
                 3. Panel Administrador
             </button>
         </li>
-        <li class="nav-item {% if logged_role != 'superadmin' %}d-none{% endif %}" id="navMaintenanceTabItem" role="presentation">
+        {% endif %}
+        {% if logged_role == 'superadmin' %}
+        <li class="nav-item" id="navMaintenanceTabItem" role="presentation">
             <button class="nav-link fw-bold small" id="tab-maintenance-btn" data-bs-toggle="pill" data-bs-target="#pane-maintenance" type="button" role="tab">
                 4. Mantenimiento del Sistema
             </button>
         </li>
+        {% endif %}
     </ul>
 
     <div class="tab-content">
@@ -660,7 +657,6 @@
                                 <tr>
                                     <th>ID</th>
                                     <th>Usuario</th>
-                                    <th>Correo</th>
                                     <th>Teléfono</th>
                                     <th>Rol</th>
                                 </tr>
@@ -704,7 +700,7 @@
         </div>
 
         <!-- ==================== PESTAÑA 4: MANTENIMIENTO DEL SISTEMA (SOLO SUPERUSUARIO PROGRAMADOR) ==================== -->
-        <div class="tab-pane fade" id="pane-maintenance" role="tabpanel">
+        <div class="tab-pane fade {% if logged_role != 'superadmin' %}d-none{% endif %}" id="pane-maintenance" role="tabpanel">
             <div class="siam-card">
                 <div class="card-header-siam">
                     <span>Módulo de Mantenimiento del Sistema (Exclusivo Superusuario Programador)</span>

@@ -12,65 +12,8 @@ class DatabaseManager:
     ADMIN_SECRET_KEY = "SIAM2026"
     # Credenciales por defecto del Superusuario exclusivo para el Programador
     SUPERUSER_USERNAME = "programador"
-    SUPERUSER_EMAIL = "programador@siam.com"
     SUPERUSER_PHONE = "04120000000"
     SUPERUSER_DEFAULT_PASS = "SiamProg2026!"
-
-    @staticmethod
-    def validate_strict_email(email):
-        """
-        Valida de forma estricta un correo electrónico.
-        Retorna (True, "") si es válido o (False, mensaje_error) si es inválido.
-        """
-        import re
-        if not email or not isinstance(email, str):
-            return False, "El correo electrónico es obligatorio."
-        email = email.strip()
-        if " " in email:
-            return False, "El correo electrónico no puede contener espacios en blanco."
-        if email.count("@") != 1:
-            return False, "El correo electrónico debe contener exactamente un símbolo '@'."
-        local_part, domain_part = email.split("@")
-        if not local_part or len(local_part) < 2:
-            return False, "El nombre de usuario del correo (antes del @) debe tener al menos 2 caracteres."
-        if len(local_part) > 64 or len(email) > 254:
-            return False, "El correo electrónico excede la longitud máxima permitida."
-        if local_part.startswith(".") or local_part.endswith(".") or ".." in email:
-            return False, "El correo electrónico no puede iniciar, terminar ni tener puntos consecutivos (..)."
-        if not re.match(r"^[A-Za-z0-9._%+\-]+$", local_part):
-            return False, "El usuario del correo contiene caracteres inválidos."
-        if not domain_part or "." not in domain_part:
-            return False, "El dominio del correo debe incluir una extensión válida (ejemplo: @gmail.com)."
-        if domain_part.startswith(".") or domain_part.endswith(".") or domain_part.startswith("-") or domain_part.endswith("-"):
-            return False, "El dominio del correo tiene un formato inválido."
-        domain_labels = domain_part.lower().split(".")
-        if any(len(lbl) == 0 for lbl in domain_labels):
-            return False, "El dominio del correo contiene puntos vacíos consecutivos."
-        tld = domain_labels[-1]
-        sld = domain_labels[-2]
-        if len(sld) < 2:
-            return False, "El nombre del proveedor de correo después del '@' es demasiado corto."
-        if not re.match(r"^[a-z]{2,12}$", tld):
-            return False, "La extensión del correo (ej. .com, .es, .ve, .org) debe tener entre 2 y 12 letras sin números."
-        for lbl in domain_labels:
-            if not re.match(r"^[a-z0-9\-]+$", lbl) or lbl.startswith("-") or lbl.endswith("-"):
-                return False, f"El segmento de dominio '{lbl}' no es válido."
-        common_typos = {
-            "gmal.com": "gmail.com",
-            "gmial.com": "gmail.com",
-            "gamil.com": "gmail.com",
-            "gmail.co": "gmail.com",
-            "gmail.c": "gmail.com",
-            "hotmial.com": "hotmail.com",
-            "hotmal.com": "hotmail.com",
-            "outlok.com": "outlook.com",
-            "yaho.com": "yahoo.com"
-        }
-        domain_low = domain_part.lower()
-        if domain_low in common_typos:
-            sugerencia = common_typos[domain_low]
-            return False, f"Dominio '{domain_low}' inválido o mal escrito. ¿Quiso decir '@{sugerencia}'?"
-        return True, "Correo electrónico válido."
     
     def __init__(self, db_name=None):
         if db_name is None:
@@ -87,6 +30,9 @@ class DatabaseManager:
         """Crea las tablas relacionales necesarias si no existen (Patrón de migración inicial)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Activar WAL mode para mejor concurrencia
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=10000")
             
             # Tabla 1: Registro de lotes de vidrio y proveedores
             cursor.execute('''
@@ -136,12 +82,11 @@ class DatabaseManager:
                 )
             ''')
             
-            # Tabla 4: Usuarios del Sistema con Rol (admin / usuario)
+            # Tabla 4: Usuarios del Sistema con Rol (admin / usuario / superadmin) - SIN CORREO
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT UNIQUE NOT NULL,
-                    email TEXT UNIQUE NOT NULL,
                     phone TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
                     role TEXT NOT NULL DEFAULT 'usuario',
@@ -162,6 +107,38 @@ class DatabaseManager:
                     cursor.execute(col_sql)
                 except sqlite3.OperationalError:
                     pass
+
+            # Si la tabla users antigua tenía columna 'email', reconstruirla sin 'email'
+            cursor.execute("PRAGMA table_info(users)")
+            user_cols = [c_info[1] for c_info in cursor.fetchall()]
+            if "email" in user_cols:
+                cursor.execute("PRAGMA foreign_keys=OFF")
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS users_clean (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT UNIQUE NOT NULL,
+                        phone TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        role TEXT NOT NULL DEFAULT 'usuario',
+                        failed_login_attempts INTEGER DEFAULT 0,
+                        account_locked_until TIMESTAMP,
+                        password_changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                cursor.execute('''
+                    INSERT OR IGNORE INTO users_clean (
+                        id, username, phone, password_hash, role,
+                        failed_login_attempts, account_locked_until, password_changed_at, created_at
+                    )
+                    SELECT
+                        id, username, phone, password_hash, role,
+                        COALESCE(failed_login_attempts, 0), account_locked_until, password_changed_at, created_at
+                    FROM users
+                ''')
+                cursor.execute("DROP TABLE users")
+                cursor.execute("ALTER TABLE users_clean RENAME TO users")
+                cursor.execute("PRAGMA foreign_keys=ON")
             
             # Tabla 5: Registro de Actividad de Usuarios (Para métricas del Admin)
             cursor.execute('''
@@ -223,8 +200,8 @@ class DatabaseManager:
                     pwd_hash = hashlib.sha256(self.SUPERUSER_DEFAULT_PASS.encode()).hexdigest()
                 try:
                     cursor.execute(
-                        "INSERT INTO users (username, email, phone, password_hash, role) VALUES (?, ?, ?, ?, 'superadmin')",
-                        (self.SUPERUSER_USERNAME, self.SUPERUSER_EMAIL, self.SUPERUSER_PHONE, pwd_hash)
+                        "INSERT INTO users (username, phone, password_hash, role) VALUES (?, ?, ?, 'superadmin')",
+                        (self.SUPERUSER_USERNAME, self.SUPERUSER_PHONE, pwd_hash)
                     )
                 except sqlite3.IntegrityError:
                     pass
@@ -234,37 +211,34 @@ class DatabaseManager:
 
     # --- Operaciones CRUD y Autenticación ---
     
-    def check_user_exists(self, username, email, phone):
-        """Verifica si ya existe un usuario con el mismo username, email o teléfono."""
+    def check_user_exists(self, username, phone):
+        """Verifica si ya existe un usuario con el mismo username o teléfono."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT username, email, phone FROM users WHERE username = ? OR email = ? OR phone = ?",
-                (username, email, phone)
+                "SELECT username, phone FROM users WHERE LOWER(username) = LOWER(?) OR phone = ?",
+                (username, phone)
             )
             row = cursor.fetchone()
             if row:
                 if row[0].lower() == username.lower():
                     return "El Nombre de Usuario ya está registrado."
-                if row[1].lower() == email.lower():
-                    return "El Correo Electrónico ya está registrado."
-                if row[2] == phone:
+                if row[1] == phone:
                     return "El Número de Teléfono ya está registrado."
                 return "Uno de los identificadores ya se encuentra registrado."
             return None
 
-    def register_user(self, username, email, phone, password, role='usuario'):
-        """Registra un nuevo usuario con múltiples identificadores y un rol."""
+    def register_user(self, username, phone, password, role='usuario'):
+        """Registra un nuevo usuario con usuario, teléfono y un rol."""
         import bcrypt
-        # Generar salt y hash usando bcrypt
         salt = bcrypt.gensalt()
         password_hash = bcrypt.hashpw(password.encode(), salt).decode('utf-8')
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT INTO users (username, email, phone, password_hash, role) VALUES (?, ?, ?, ?, ?)",
-                    (username, email, phone, password_hash, role)
+                    "INSERT INTO users (username, phone, password_hash, role) VALUES (?, ?, ?, ?)",
+                    (username, phone, password_hash, role)
                 )
             return True
         except sqlite3.IntegrityError:
@@ -281,14 +255,13 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             
-            # Primero verificar si la cuenta está bloqueada (búsqueda insensible a mayúsculas/minúsculas)
             cursor.execute(
                 """
                 SELECT id, username, role, password_hash, failed_login_attempts, account_locked_until
                 FROM users 
-                WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?
+                WHERE LOWER(username) = LOWER(?) OR phone = ?
                 """,
-                (identifier, identifier, identifier)
+                (identifier, identifier)
             )
             result = cursor.fetchone()
             if not result:
@@ -376,7 +349,16 @@ class DatabaseManager:
             stored_hash = result[0]
             
             # Verificar contraseña antigua
-            if not bcrypt.checkpw(old_password.encode(), stored_hash.encode('utf-8')):
+            import hashlib
+            old_pwd_ok = False
+            try:
+                if stored_hash.startswith(('$2b$', '$2a$', '$2y$')):
+                    old_pwd_ok = bcrypt.checkpw(old_password.encode(), stored_hash.encode('utf-8'))
+                else:
+                    old_pwd_ok = (hashlib.sha256(old_password.encode()).hexdigest() == stored_hash)
+            except Exception:
+                old_pwd_ok = False
+            if not old_pwd_ok:
                 return False
             
             # Verificar que no sea una contraseña reciente (últimas 5)
@@ -415,11 +397,11 @@ class DatabaseManager:
             return True
 
     def get_user_for_recovery(self, identifier):
-        """Busca un usuario por su nombre de usuario o correo electrónico para recuperación."""
+        """Busca un usuario por su nombre de usuario o teléfono para recuperación."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, username, email FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)",
+                "SELECT id, username, phone FROM users WHERE LOWER(username) = LOWER(?) OR phone = ?",
                 (identifier.strip(), identifier.strip())
             )
             return cursor.fetchone()
@@ -498,7 +480,7 @@ class DatabaseManager:
             
             cursor.execute(
                 "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
-                (user_id, "PASSWORD_RECOVERY", "Contraseña restablecida exitosamente vía código de verificación por correo")
+                (user_id, "PASSWORD_RECOVERY", "Contraseña restablecida exitosamente vía código de verificación")
             )
             conn.commit()
         return True, "Contraseña actualizada exitosamente."
@@ -538,80 +520,71 @@ class DatabaseManager:
             return True
 
     def get_all_users(self):
-        """Retorna todos los usuarios registrados en el sistema."""
+        """Retorna todos los usuarios registrados en el sistema (sin correo)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, username, email, phone, role FROM users ORDER BY id ASC")
+            cursor.execute("SELECT id, username, phone, role FROM users ORDER BY id ASC")
             return cursor.fetchall()
 
     def get_user_by_id(self, user_id):
-        """Obtiene los datos de un usuario por su ID."""
+        """Obtiene los datos de un usuario por su ID (sin correo)."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id, username, email, phone, role FROM users WHERE id = ?", (int(user_id),))
+            cursor.execute("SELECT id, username, phone, role FROM users WHERE id = ?", (int(user_id),))
             return cursor.fetchone()
 
     def admin_search_users(self, search_term=""):
-        """4. Consultar Usuario: Busca usuarios por ID, nombre de usuario, correo, teléfono o rol."""
+        """4. Consultar Usuario: Busca usuarios por ID, nombre de usuario, teléfono o rol."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             term = (search_term or "").strip()
             if not term:
-                cursor.execute("SELECT id, username, email, phone, role FROM users ORDER BY id ASC")
+                cursor.execute("SELECT id, username, phone, role FROM users ORDER BY id ASC")
                 return cursor.fetchall()
             like_term = f"%{term}%"
             cursor.execute(
                 """
-                SELECT id, username, email, phone, role
+                SELECT id, username, phone, role
                 FROM users
                 WHERE CAST(id AS TEXT) = ?
                    OR LOWER(username) LIKE LOWER(?)
-                   OR LOWER(email) LIKE LOWER(?)
                    OR phone LIKE ?
                    OR LOWER(role) LIKE LOWER(?)
                 ORDER BY id ASC
                 """,
-                (term, like_term, like_term, like_term, like_term)
+                (term, like_term, like_term, like_term)
             )
             return cursor.fetchall()
 
-    def admin_add_user(self, username, email, phone, password, role='usuario'):
-        """1. Agregar Usuario desde el Panel Administrativo con validación estricta."""
+    def admin_add_user(self, username, phone, password, role='usuario'):
+        """1. Agregar Usuario desde el Panel Administrativo."""
         username = (username or "").strip()
-        email = (email or "").strip()
         phone = (phone or "").strip()
         if not username or len(username) < 3:
             return False, "El nombre de usuario debe tener al menos 3 caracteres."
-        valid_mail, mail_msg = self.validate_strict_email(email)
-        if not valid_mail:
-            return False, mail_msg
-        if not phone.isdigit() or len(phone) < 10:
-            return False, "El teléfono debe contener solo dígitos numéricos (mínimo 10 dígitos)."
+        if not phone.isdigit() or len(phone) < 7:
+            return False, "El teléfono debe contener solo dígitos numéricos (mínimo 7 dígitos)."
         if not password or len(password) < 6:
             return False, "La contraseña debe tener al menos 6 caracteres."
-        dup = self.check_user_exists(username, email, phone)
+        dup = self.check_user_exists(username, phone)
         if dup:
             return False, dup
         if role not in ('usuario', 'admin', 'superadmin'):
             role = 'usuario'
-        ok = self.register_user(username, email, phone, password, role)
+        ok = self.register_user(username, phone, password, role)
         if ok:
             return True, f"Usuario '{username}' agregado exitosamente con rol '{role}'."
         return False, "No se pudo agregar el usuario por conflicto de integridad en la base de datos."
 
-    def admin_update_user(self, user_id, username, email, phone, role='usuario', new_password=None):
+    def admin_update_user(self, user_id, username, phone, role='usuario', new_password=None):
         """2. Modificar Usuario desde el Panel Administrativo."""
         import bcrypt
         username = (username or "").strip()
-        email = (email or "").strip()
         phone = (phone or "").strip()
         if not username or len(username) < 3:
             return False, "El nombre de usuario debe tener al menos 3 caracteres."
-        valid_mail, mail_msg = self.validate_strict_email(email)
-        if not valid_mail:
-            return False, mail_msg
-        if not phone.isdigit() or len(phone) < 10:
-            return False, "El teléfono debe contener solo dígitos numéricos (mínimo 10 dígitos)."
+        if not phone.isdigit() or len(phone) < 7:
+            return False, "El teléfono debe contener solo dígitos numéricos (mínimo 7 dígitos)."
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT username, role FROM users WHERE id = ?", (int(user_id),))
@@ -622,23 +595,23 @@ class DatabaseManager:
                 role = 'superadmin'
                 username = self.SUPERUSER_USERNAME
             cursor.execute(
-                "SELECT id FROM users WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?) AND id != ?",
-                (username, email, phone, int(user_id))
+                "SELECT id FROM users WHERE (LOWER(username) = LOWER(?) OR phone = ?) AND id != ?",
+                (username, phone, int(user_id))
             )
             if cursor.fetchone():
-                return False, "Otro usuario ya tiene registrado ese nombre, correo o teléfono."
+                return False, "Otro usuario ya tiene registrado ese nombre de usuario o teléfono."
             if new_password and new_password.strip():
                 if len(new_password.strip()) < 6:
                     return False, "La nueva contraseña debe tener al menos 6 caracteres."
                 new_hash = bcrypt.hashpw(new_password.strip().encode(), bcrypt.gensalt()).decode('utf-8')
                 cursor.execute(
-                    "UPDATE users SET username = ?, email = ?, phone = ?, role = ?, password_hash = ? WHERE id = ?",
-                    (username, email, phone, role, new_hash, int(user_id))
+                    "UPDATE users SET username = ?, phone = ?, role = ?, password_hash = ? WHERE id = ?",
+                    (username, phone, role, new_hash, int(user_id))
                 )
             else:
                 cursor.execute(
-                    "UPDATE users SET username = ?, email = ?, phone = ?, role = ? WHERE id = ?",
-                    (username, email, phone, role, int(user_id))
+                    "UPDATE users SET username = ?, phone = ?, role = ? WHERE id = ?",
+                    (username, phone, role, int(user_id))
                 )
             conn.commit()
             return True, f"Usuario ID #{user_id} ('{username}') modificado correctamente."
@@ -700,9 +673,6 @@ class DatabaseManager:
             "db_size_kb": db_size_kb,
             "db_path": self.db_name,
             "table_counts": counts,
-            "users_count": counts.get("users", 0),
-            "locked_users": 0,
-            "logs_count": counts.get("activity_log", 0),
             "grid_modality": "Motor Matricial 2D FFD Activo"
         }
 

@@ -58,59 +58,55 @@ from src.optimization.bin_packing import GlassSheet
 
 DatabaseManager.ADMIN_SECRET_KEY = "SIAM2026"
 DatabaseManager.SUPERUSER_USERNAME = "programador"
-DatabaseManager.SUPERUSER_EMAIL = "programador@siam.com"
 DatabaseManager.SUPERUSER_PHONE = "04120000000"
 DatabaseManager.SUPERUSER_DEFAULT_PASS = "SiamProg2026!"
 
-def _validate_strict_email(email):
-    if not email or not isinstance(email, str):
-        return False, "El correo electrónico es obligatorio."
-    email = email.strip()
-    if " " in email:
-        return False, "El correo electrónico no puede contener espacios en blanco."
-    if email.count("@") != 1:
-        return False, "El correo electrónico debe contener exactamente un símbolo '@'."
-    local_part, domain_part = email.split("@")
-    if not local_part or len(local_part) < 2:
-        return False, "El nombre de usuario del correo (antes del @) debe tener al menos 2 caracteres."
-    if len(local_part) > 64 or len(email) > 254:
-        return False, "El correo electrónico excede la longitud máxima permitida."
-    if local_part.startswith(".") or local_part.endswith(".") or ".." in email:
-        return False, "El correo electrónico no puede iniciar, terminar ni tener puntos consecutivos (..)."
-    if not re.match(r"^[A-Za-z0-9._%+\-]+$", local_part):
-        return False, "El usuario del correo contiene caracteres inválidos."
-    if not domain_part or "." not in domain_part:
-        return False, "El dominio del correo debe incluir una extensión válida (ejemplo: @gmail.com)."
-    if domain_part.startswith(".") or domain_part.endswith(".") or domain_part.startswith("-") or domain_part.endswith("-"):
-        return False, "El dominio del correo tiene un formato inválido."
-    domain_labels = domain_part.lower().split(".")
-    if any(len(lbl) == 0 for lbl in domain_labels):
-        return False, "El dominio del correo contiene puntos vacíos consecutivos."
-    tld = domain_labels[-1]
-    sld = domain_labels[-2]
-    if len(sld) < 2:
-        return False, "El nombre del proveedor de correo después del '@' es demasiado corto."
-    if not re.match(r"^[a-z]{2,12}$", tld):
-        return False, "La extensión del correo (ej. .com, .es, .ve, .org) debe tener entre 2 y 12 letras sin números."
-    for lbl in domain_labels:
-        if not re.match(r"^[a-z0-9\-]+$", lbl) or lbl.startswith("-") or lbl.endswith("-"):
-            return False, f"El segmento de dominio '{lbl}' no es válido."
-    common_typos = {
-        "gmal.com": "gmail.com",
-        "gmial.com": "gmail.com",
-        "gamil.com": "gmail.com",
-        "gmail.co": "gmail.com",
-        "gmail.c": "gmail.com",
-        "hotmial.com": "hotmail.com",
-        "hotmal.com": "hotmail.com",
-        "outlok.com": "outlook.com",
-        "yaho.com": "yahoo.com"
-    }
-    domain_low = domain_part.lower()
-    if domain_low in common_typos:
-        sugerencia = common_typos[domain_low]
-        return False, f"Dominio '{domain_low}' inválido o mal escrito. ¿Quiso decir '@{sugerencia}'?"
-    return True, "Correo electrónico válido."
+def _check_user_exists_safe(self, username, phone):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT username, phone FROM users WHERE LOWER(username) = LOWER(?) OR phone = ?",
+            (username, phone)
+        )
+        row = cursor.fetchone()
+        if row:
+            if str(row[0]).lower() == str(username).lower():
+                return "El Nombre de Usuario ya está registrado."
+            if str(row[1]) == str(phone):
+                return "El Número de Teléfono ya está registrado."
+            return "Uno de los identificadores ya se encuentra registrado."
+        return None
+
+def _register_user_safe(self, username, phone, password, role='usuario'):
+    import bcrypt
+    salt = bcrypt.gensalt()
+    password_hash = bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+    try:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (username, phone, password_hash, role) VALUES (?, ?, ?, ?)",
+                (username, phone, password_hash, role)
+            )
+            conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+def _get_user_for_recovery_safe(self, identifier):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, username, phone FROM users WHERE LOWER(username) = LOWER(?) OR phone = ?",
+            (identifier.strip(), identifier.strip())
+        )
+        return cursor.fetchone()
+
+def _get_all_users_safe(self):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, phone, role FROM users ORDER BY id ASC")
+        return cursor.fetchall()
 
 def _authenticate_user_safe(self, identifier, password):
     import bcrypt
@@ -122,9 +118,9 @@ def _authenticate_user_safe(self, identifier, password):
             """
             SELECT id, username, role, password_hash, failed_login_attempts, account_locked_until
             FROM users
-            WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?
+            WHERE LOWER(username) = LOWER(?) OR phone = ?
             """,
-            (identifier, identifier, identifier)
+            (identifier, identifier)
         )
         result = cursor.fetchone()
         if not result:
@@ -179,7 +175,7 @@ def _authenticate_user_safe(self, identifier, password):
 def _get_user_by_id_safe(self, user_id):
     with self._get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, email, phone, role FROM users WHERE id = ?", (int(user_id),))
+        cursor.execute("SELECT id, username, phone, role FROM users WHERE id = ?", (int(user_id),))
         return cursor.fetchone()
 
 def _admin_search_users_safe(self, search_term=""):
@@ -187,57 +183,48 @@ def _admin_search_users_safe(self, search_term=""):
         cursor = conn.cursor()
         term = (search_term or "").strip()
         if not term:
-            cursor.execute("SELECT id, username, email, phone, role FROM users ORDER BY id ASC")
+            cursor.execute("SELECT id, username, phone, role FROM users ORDER BY id ASC")
             return cursor.fetchall()
         like_term = f"%{term}%"
         cursor.execute(
             """
-            SELECT id, username, email, phone, role
+            SELECT id, username, phone, role
             FROM users
             WHERE CAST(id AS TEXT) = ?
                OR LOWER(username) LIKE LOWER(?)
-               OR LOWER(email) LIKE LOWER(?)
                OR phone LIKE ?
                OR LOWER(role) LIKE LOWER(?)
             ORDER BY id ASC
             """,
-            (term, like_term, like_term, like_term, like_term)
+            (term, like_term, like_term, like_term)
         )
         return cursor.fetchall()
 
-def _admin_add_user_safe(self, username, email, phone, password, role='usuario'):
+def _admin_add_user_safe(self, username, phone, password, role='usuario'):
     username = (username or "").strip()
-    email = (email or "").strip()
     phone = (phone or "").strip()
     if not username or len(username) < 3:
         return False, "El nombre de usuario debe tener al menos 3 caracteres."
-    valid_mail, mail_msg = DatabaseManager.validate_strict_email(email)
-    if not valid_mail:
-        return False, mail_msg
     if not phone.isdigit() or len(phone) < 7:
         return False, "El teléfono debe contener solo dígitos numéricos."
     if not password or len(password) < 6:
         return False, "La contraseña debe tener al menos 6 caracteres."
-    dup = self.check_user_exists(username, email, phone)
+    dup = self.check_user_exists(username, phone)
     if dup:
         return False, dup
     if role not in ('usuario', 'admin', 'superadmin'):
         role = 'usuario'
-    ok = self.register_user(username, email, phone, password, role)
+    ok = self.register_user(username, phone, password, role)
     if ok:
         return True, f"Usuario '{username}' agregado exitosamente con rol '{role}'."
     return False, "No se pudo agregar el usuario."
 
-def _admin_update_user_safe(self, user_id, username, email, phone, role='usuario', new_password=None):
+def _admin_update_user_safe(self, user_id, username, phone, role='usuario', new_password=None):
     import bcrypt
     username = (username or "").strip()
-    email = (email or "").strip()
     phone = (phone or "").strip()
     if not username or len(username) < 3:
         return False, "El nombre de usuario debe tener al menos 3 caracteres."
-    valid_mail, mail_msg = DatabaseManager.validate_strict_email(email)
-    if not valid_mail:
-        return False, mail_msg
     if not phone.isdigit() or len(phone) < 7:
         return False, "El teléfono debe contener solo dígitos numéricos."
     with self._get_connection() as conn:
@@ -250,23 +237,23 @@ def _admin_update_user_safe(self, user_id, username, email, phone, role='usuario
             role = 'superadmin'
             username = DatabaseManager.SUPERUSER_USERNAME
         cursor.execute(
-            "SELECT id FROM users WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?) AND id != ?",
-            (username, email, phone, int(user_id))
+            "SELECT id FROM users WHERE (LOWER(username) = LOWER(?) OR phone = ?) AND id != ?",
+            (username, phone, int(user_id))
         )
         if cursor.fetchone():
-            return False, "Otro usuario ya tiene registrado ese nombre, correo o teléfono."
+            return False, "Otro usuario ya tiene registrado ese nombre de usuario o teléfono."
         if new_password and new_password.strip():
             if len(new_password.strip()) < 6:
                 return False, "La nueva contraseña debe tener al menos 6 caracteres."
             new_hash = bcrypt.hashpw(new_password.strip().encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
             cursor.execute(
-                "UPDATE users SET username = ?, email = ?, phone = ?, role = ?, password_hash = ? WHERE id = ?",
-                (username, email, phone, role, new_hash, int(user_id))
+                "UPDATE users SET username = ?, phone = ?, role = ?, password_hash = ? WHERE id = ?",
+                (username, phone, role, new_hash, int(user_id))
             )
         else:
             cursor.execute(
-                "UPDATE users SET username = ?, email = ?, phone = ?, role = ? WHERE id = ?",
-                (username, email, phone, role, int(user_id))
+                "UPDATE users SET username = ?, phone = ?, role = ? WHERE id = ?",
+                (username, phone, role, int(user_id))
             )
         conn.commit()
         return True, f"Usuario ID #{user_id} ('{username}') modificado correctamente."
@@ -364,7 +351,10 @@ def _validate_sheet_dimensions_safe(width, height):
         return False, f"Medida de lámina fuera del rango permitido ({w} x {h}).", ""
     return True, f"Tamaño de lámina validado correctamente ({w} x {h} mm).", "mm"
 
-DatabaseManager.validate_strict_email = staticmethod(_validate_strict_email)
+DatabaseManager.check_user_exists = _check_user_exists_safe
+DatabaseManager.register_user = _register_user_safe
+DatabaseManager.get_user_for_recovery = _get_user_for_recovery_safe
+DatabaseManager.get_all_users = _get_all_users_safe
 DatabaseManager.authenticate_user = _authenticate_user_safe
 DatabaseManager.get_user_by_id = _get_user_by_id_safe
 DatabaseManager.admin_search_users = _admin_search_users_safe
@@ -418,20 +408,52 @@ try:
             except sqlite3.OperationalError:
                 pass
 
+        # Si la tabla users antigua tenía columna 'email', reconstruirla sin 'email'
+        c.execute("PRAGMA table_info(users)")
+        _u_cols = [_ci[1] for _ci in c.fetchall()]
+        if "email" in _u_cols:
+            c.execute("PRAGMA foreign_keys=OFF")
+            c.execute('''
+                CREATE TABLE IF NOT EXISTS users_clean (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    phone TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'usuario',
+                    failed_login_attempts INTEGER DEFAULT 0,
+                    account_locked_until TIMESTAMP,
+                    password_changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            c.execute('''
+                INSERT OR IGNORE INTO users_clean (
+                    id, username, phone, password_hash, role,
+                    failed_login_attempts, account_locked_until, password_changed_at, created_at
+                )
+                SELECT
+                    id, username, phone, password_hash, role,
+                    COALESCE(failed_login_attempts, 0), account_locked_until, password_changed_at, created_at
+                FROM users
+            ''')
+            c.execute("DROP TABLE users")
+            c.execute("ALTER TABLE users_clean RENAME TO users")
+            c.execute("PRAGMA foreign_keys=ON")
+
         # Garantizar que los usuarios registrados (alberth19, daniel12 y programador) estén activos y desbloqueados
         _default_accounts = [
-            ("alberth19", "2007alberthvillegas@gmail.com", "04124321731", "$2b$12$LfC1gpjPW/IYmjz3F41LROddMT5N4eCZRszY6vWiu9MssslkDRH2G", "admin"),
-            ("daniel12", "danielmoreno@gmail.com", "04121458783", "$2b$12$KQqtoR/Z388v.zFsmXxa6.jBfPkT0lpTwEe8lyNHH6O8bJ4SbwvrO", "admin"),
-            ("programador", "programador@siam.com", "04120000000", "$2b$12$z/ugJ0jhaga6P1XDGo7NLe2YG9rXf6xJNEeR2YvKc4nMKX5Wj3wRa", "superadmin"),
+            ("alberth19", "04124321731", "$2b$12$LfC1gpjPW/IYmjz3F41LROddMT5N4eCZRszY6vWiu9MssslkDRH2G", "admin"),
+            ("daniel12", "04121458783", "$2b$12$KQqtoR/Z388v.zFsmXxa6.jBfPkT0lpTwEe8lyNHH6O8bJ4SbwvrO", "admin"),
+            ("programador", "04120000000", "$2b$12$.I3U/Av9UmFQywRNOVOMpeHqvTyYJFzoUpiepUYaGN9TXA6NzWXnG", "superadmin"),
         ]
-        for _u_name, _u_mail, _u_phone, _u_hash, _u_role in _default_accounts:
+        for _u_name, _u_phone, _u_hash, _u_role in _default_accounts:
             c.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(?)", (_u_name,))
             _existing = c.fetchone()
             if not _existing:
                 try:
                     c.execute(
-                        "INSERT INTO users (username, email, phone, password_hash, role, failed_login_attempts, account_locked_until) VALUES (?, ?, ?, ?, ?, 0, NULL)",
-                        (_u_name, _u_mail, _u_phone, _u_hash, _u_role)
+                        "INSERT INTO users (username, phone, password_hash, role, failed_login_attempts, account_locked_until) VALUES (?, ?, ?, ?, 0, NULL)",
+                        (_u_name, _u_phone, _u_hash, _u_role)
                     )
                 except sqlite3.IntegrityError:
                     pass
@@ -536,9 +558,39 @@ def index():
                     });
                 });
             }
+            // Eliminar cualquier campo de correo electrónico si alguna plantilla antigua lo tenía
+            var oldRegEmail = document.getElementById('regEmail');
+            if (oldRegEmail) {
+                var emailBox = oldRegEmail.closest('.mb-2, .mb-3') || oldRegEmail.parentElement;
+                if (emailBox) emailBox.remove();
+            }
+            var oldOtpSec = document.getElementById('regOtpSection');
+            if (oldOtpSec) oldOtpSec.remove();
+            document.querySelectorAll('#pane-admin th').forEach(function(th) {
+                if ((th.textContent || '').trim().toLowerCase() === 'correo') th.remove();
+            });
+            var loginIdLabel = document.querySelector('label[for="loginIdentifier"]');
+            if (loginIdLabel) loginIdLabel.textContent = 'Nombre de Usuario o Teléfono:';
+            var forgotIdLabel = document.querySelector('label[for="forgotIdentifier"]');
+            if (forgotIdLabel) forgotIdLabel.textContent = 'Usuario o Teléfono Registrado:';
+
+            // Ocultar y remover físicamente el Módulo de Mantenimiento si no es superadmin
+            var rootEl = document.getElementById('siamAppRoot');
+            var currentRole = ((rootEl && rootEl.dataset && rootEl.dataset.role) || '').toLowerCase();
+            var modDropdown = document.getElementById('moduleDropdown');
+            if (currentRole !== 'superadmin') {
+                var optMaintEl = document.getElementById('optModuleMaintenance');
+                if (optMaintEl) optMaintEl.remove();
+                var paneMaintEl = document.getElementById('pane-maintenance');
+                if (paneMaintEl) paneMaintEl.classList.add('d-none');
+            }
+            if (currentRole !== 'admin' && currentRole !== 'superadmin') {
+                var optAdminEl = document.getElementById('optModuleAdmin');
+                if (optAdminEl) optAdminEl.remove();
+            }
+
             var fieldLabels = [
                 { id: 'regUsername', label: 'Nombre de Usuario:', placeholder: 'Ej: juanperez (min. 3 caracteres)' },
-                { id: 'regEmail', label: 'Correo Electronico:', placeholder: 'Ej: correo@gmail.com (con @ y dominio valido)' },
                 { id: 'regPhone', label: 'Numero de Telefono:', placeholder: 'Ej: 04121234567 (solo numeros)' },
                 { id: 'regPassword', label: 'Contrasena Segura:', placeholder: 'Min. 8 caract., Mayus, Num y Simbolo' },
                 { id: 'regAdminKey', label: 'Clave Secreta de Administrador:', placeholder: 'Ingresa la clave especial SIAM2026' },
@@ -590,7 +642,7 @@ def index():
                         authAlert.className = 'alert py-2 small ' + (ok ? 'alert-success' : 'alert-danger');
                     }
                     if (!identifier || !password) {
-                        showLoginMsg('Por favor ingresa tu usuario/correo y contraseña.', false);
+                        showLoginMsg('Por favor ingresa tu nombre de usuario o teléfono y contraseña.', false);
                         return;
                     }
                     try {
@@ -617,7 +669,6 @@ def index():
                 oldRegBtn.parentNode.replaceChild(newRegBtn, oldRegBtn);
                 newRegBtn.addEventListener('click', async function() {
                     var username = (document.getElementById('regUsername')?.value || '').trim();
-                    var email = (document.getElementById('regEmail')?.value || '').trim();
                     var phone = (document.getElementById('regPhone')?.value || '').trim();
                     var password = (document.getElementById('regPassword')?.value || '').trim();
                     var wants_admin = document.getElementById('regAdminCheck')?.checked || false;
@@ -632,7 +683,7 @@ def index():
                         var res = await fetch('/api/auth/register', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ username: username, email: email, phone: phone, password: password, wants_admin: wants_admin, admin_key: admin_key })
+                            body: JSON.stringify({ username: username, phone: phone, password: password, wants_admin: wants_admin, admin_key: admin_key })
                         });
                         var data = await res.json();
                         if (!res.ok || !data.success) {
@@ -678,7 +729,7 @@ def api_login():
         admin_key = (data.get('admin_key') or '').strip()
 
         if not identifier or not password:
-            return jsonify({'success': False, 'message': 'Por favor ingresa tu usuario/correo y contrasena.'}), 400
+            return jsonify({'success': False, 'message': 'Por favor ingresa tu nombre de usuario o telefono y contrasena.'}), 400
 
         res = db_manager.authenticate_user(identifier, password)
         if res == 'account_locked':
@@ -726,35 +777,28 @@ def api_login():
 
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
-    """Registra un nuevo usuario en la base de datos desde la interfaz web con validación estricta de correo (Punto 6)."""
+    """Registra un nuevo usuario en la base de datos desde la interfaz web (sin campo de correo)."""
     try:
         if not db_manager:
             return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
 
         data = request.get_json(silent=True) or {}
         username = (data.get('username') or '').strip()
-        email = (data.get('email') or '').strip()
         phone = (data.get('phone') or '').strip()
         password = (data.get('password') or '').strip()
         wants_admin = bool(data.get('wants_admin', False))
         admin_key = (data.get('admin_key') or '').strip()
 
-        if not username or not email or not phone or not password:
+        if not username or not phone or not password:
             return jsonify({'success': False, 'message': 'Todos los campos son obligatorios.'}), 400
         if len(username) < 3:
             return jsonify({'success': False, 'message': 'El usuario debe tener al menos 3 caracteres.'}), 400
-
-        # Punto 6: Validación estricta del correo electrónico
-        valid_mail, mail_err = DatabaseManager.validate_strict_email(email)
-        if not valid_mail:
-            return jsonify({'success': False, 'message': mail_err}), 400
-
         if not phone.isdigit() or len(phone) < 7:
             return jsonify({'success': False, 'message': 'El telefono debe contener solo numeros (minimo 7 digitos).'}), 400
         if len(password) < 8:
             return jsonify({'success': False, 'message': 'La contrasena debe tener minimo 8 caracteres.'}), 400
 
-        existing_err = db_manager.check_user_exists(username, email, phone)
+        existing_err = db_manager.check_user_exists(username, phone)
         if existing_err:
             return jsonify({'success': False, 'message': existing_err}), 400
 
@@ -765,7 +809,7 @@ def api_register():
                 return jsonify({'success': False, 'message': 'Clave secreta de Administrador incorrecta.'}), 403
             role = 'admin'
 
-        if db_manager.register_user(username, email, phone, password, role):
+        if db_manager.register_user(username, phone, password, role):
             tipo_txt = 'Administrador' if role == 'admin' else 'Usuario Normal'
             return jsonify({'success': True, 'message': f'Cuenta de {tipo_txt} creada con exito para {username}. Ya puedes iniciar sesion.'})
         return jsonify({'success': False, 'message': 'No se pudo registrar el usuario.'}), 500
@@ -782,19 +826,19 @@ def api_forgot_send_code():
     data = request.get_json(silent=True) or {}
     identifier = (data.get('identifier') or '').strip()
     if not identifier:
-        return jsonify({'success': False, 'message': 'Ingresa tu usuario o correo electrónico registrado.'}), 400
+        return jsonify({'success': False, 'message': 'Ingresa tu nombre de usuario o teléfono registrado.'}), 400
 
     user = db_manager.get_user_for_recovery(identifier)
     if not user:
-        return jsonify({'success': False, 'message': 'No existe ninguna cuenta registrada con ese usuario o correo.'}), 404
+        return jsonify({'success': False, 'message': 'No existe ninguna cuenta registrada con ese usuario o teléfono.'}), 404
 
-    user_id, username, email = user
+    user_id, username, phone = user
     code = db_manager.create_password_reset_code(user_id)
     return jsonify({
         'success': True,
         'user_id': user_id,
         'username': username,
-        'email': email,
+        'phone': phone,
         'code': code
     })
 
@@ -867,7 +911,7 @@ def get_traceability_data():
 
     if session.get('role') in ('admin', 'superadmin'):
         users = [
-            {'id': u[0], 'username': u[1], 'email': u[2], 'phone': u[3], 'role': str(u[4]).upper()}
+            {'id': u[0], 'username': u[1], 'phone': u[2], 'role': str(u[3]).upper()}
             for u in db_manager.get_all_users()
         ]
         activity = [
@@ -903,12 +947,11 @@ def api_admin_add_user():
 
     data = request.get_json(silent=True) or {}
     username = (data.get('username') or '').strip()
-    email = (data.get('email') or '').strip()
     phone = (data.get('phone') or '').strip()
     password = (data.get('password') or '').strip()
     role = (data.get('role') or 'usuario').strip().lower()
 
-    ok, msg = db_manager.admin_add_user(username, email, phone, password, role)
+    ok, msg = db_manager.admin_add_user(username, phone, password, role)
     if ok and session.get('user_id'):
         db_manager.log_activity(session['user_id'], "Admin Agregar Usuario Web", f"Agrego a {username} ({role})")
     return jsonify({'success': ok, 'message': msg}), (200 if ok else 400)
@@ -926,12 +969,11 @@ def api_admin_update_user():
     if not user_id:
         return jsonify({'success': False, 'message': 'Debe indicar el ID del usuario a modificar.'}), 400
     username = (data.get('username') or '').strip()
-    email = (data.get('email') or '').strip()
     phone = (data.get('phone') or '').strip()
     role = (data.get('role') or 'usuario').strip().lower()
     new_password = (data.get('new_password') or '').strip()
 
-    ok, msg = db_manager.admin_update_user(int(str(user_id)), username, email, phone, role, new_password)
+    ok, msg = db_manager.admin_update_user(int(str(user_id)), username, phone, role, new_password)
     if ok and session.get('user_id'):
         db_manager.log_activity(session['user_id'], "Admin Modificar Usuario Web", f"Modifico ID #{user_id} ({username})")
     return jsonify({'success': ok, 'message': msg}), (200 if ok else 400)
@@ -968,7 +1010,7 @@ def api_admin_search_users():
     q = (request.args.get('q') or '').strip()
     rows = db_manager.admin_search_users(q)
     users = [
-        {'id': u[0], 'username': u[1], 'email': u[2], 'phone': u[3], 'role': str(u[4]).upper()}
+        {'id': u[0], 'username': u[1], 'phone': u[2], 'role': str(u[3]).upper()}
         for u in rows
     ]
     if session.get('user_id'):
