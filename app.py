@@ -6,32 +6,33 @@ Proyecto de Tesis: Sistema Inteligente de Aprovechamiento de Material (SIAM)
 """
 
 import os
+import re
 import sys
 import shutil
 import json
 import time
+import sqlite3
+import hashlib
 import logging
+from datetime import datetime
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BASE_DIR not in sys.path:
     sys.path.insert(0, _BASE_DIR)
 
-from flask import Flask, render_template, request, jsonify, send_from_directory, make_response, session
-from vision import process_glass_sheet
-from src.database.db_manager import DatabaseManager
-from src.optimization.bin_packing import GlassSheet
-
 # Configuración de Logging
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s')
 logger = logging.getLogger('SIAM_FLASK')
 
-# Auto-sincronización: si el usuario sube index.html, base.html, app.js o sw.js a la raíz de GitHub,
-# copiarlos automáticamente a sus subcarpetas correspondientes (templates/ y static/) al arrancar.
+# Auto-sincronización: si el usuario sube archivos sueltos a la raíz de GitHub,
+# copiarlos automáticamente a sus subcarpetas correspondientes antes de importar módulos.
 for _src_name, _dst_rel in [
     ('index.html', os.path.join('templates', 'index.html')),
     ('base.html', os.path.join('templates', 'base.html')),
     ('app.js', os.path.join('static', 'js', 'app.js')),
     ('sw.js', os.path.join('static', 'sw.js')),
+    ('db_manager.py', os.path.join('src', 'database', 'db_manager.py')),
+    ('bin_packing.py', os.path.join('src', 'optimization', 'bin_packing.py')),
 ]:
     _src_p = os.path.join(_BASE_DIR, _src_name)
     _dst_p = os.path.join(_BASE_DIR, _dst_rel)
@@ -43,10 +44,343 @@ for _src_name, _dst_rel in [
         except Exception as _e:
             logger.warning(f"No se pudo sincronizar {_src_name}: {_e}")
 
+from flask import Flask, render_template, request, jsonify, send_from_directory, make_response, session
+from vision import process_glass_sheet
+from src.database.db_manager import DatabaseManager
+from src.optimization.bin_packing import GlassSheet
+
+# ==============================================================================
+# PARCHE DE COMPATIBILIDAD AUTOMÁTICA PARA SUBCARPETAS DE GITHUB / RENDER
+# Garantiza que aunque src/database/db_manager.py o src/optimization/bin_packing.py
+# no hayan sido actualizados dentro de las subcarpetas de GitHub, todas las funciones,
+# constantes y usuarios existan y funcionen sin arrojar Error 500.
+# ==============================================================================
+
+DatabaseManager.ADMIN_SECRET_KEY = "SIAM2026"
+DatabaseManager.SUPERUSER_USERNAME = "programador"
+DatabaseManager.SUPERUSER_EMAIL = "programador@siam.com"
+DatabaseManager.SUPERUSER_PHONE = "04120000000"
+DatabaseManager.SUPERUSER_DEFAULT_PASS = "SiamProg2026!"
+
+def _validate_strict_email(email):
+    if not email or not isinstance(email, str):
+        return False, "El correo electrónico es obligatorio."
+    email = email.strip()
+    if " " in email:
+        return False, "El correo electrónico no puede contener espacios en blanco."
+    if email.count("@") != 1:
+        return False, "El correo electrónico debe contener exactamente un símbolo '@'."
+    local_part, domain_part = email.split("@")
+    if not local_part or len(local_part) < 2:
+        return False, "El nombre de usuario del correo (antes del @) debe tener al menos 2 caracteres."
+    if len(local_part) > 64 or len(email) > 254:
+        return False, "El correo electrónico excede la longitud máxima permitida."
+    if local_part.startswith(".") or local_part.endswith(".") or ".." in email:
+        return False, "El correo electrónico no puede iniciar, terminar ni tener puntos consecutivos (..)."
+    if not re.match(r"^[A-Za-z0-9._%+\-]+$", local_part):
+        return False, "El usuario del correo contiene caracteres inválidos."
+    if not domain_part or "." not in domain_part:
+        return False, "El dominio del correo debe incluir una extensión válida (ejemplo: @gmail.com)."
+    if domain_part.startswith(".") or domain_part.endswith(".") or domain_part.startswith("-") or domain_part.endswith("-"):
+        return False, "El dominio del correo tiene un formato inválido."
+    domain_labels = domain_part.lower().split(".")
+    if any(len(lbl) == 0 for lbl in domain_labels):
+        return False, "El dominio del correo contiene puntos vacíos consecutivos."
+    tld = domain_labels[-1]
+    sld = domain_labels[-2]
+    if len(sld) < 2:
+        return False, "El nombre del proveedor de correo después del '@' es demasiado corto."
+    if not re.match(r"^[a-z]{2,12}$", tld):
+        return False, "La extensión del correo (ej. .com, .es, .ve, .org) debe tener entre 2 y 12 letras sin números."
+    for lbl in domain_labels:
+        if not re.match(r"^[a-z0-9\-]+$", lbl) or lbl.startswith("-") or lbl.endswith("-"):
+            return False, f"El segmento de dominio '{lbl}' no es válido."
+    common_typos = {
+        "gmal.com": "gmail.com",
+        "gmial.com": "gmail.com",
+        "gamil.com": "gmail.com",
+        "gmail.co": "gmail.com",
+        "gmail.c": "gmail.com",
+        "hotmial.com": "hotmail.com",
+        "hotmal.com": "hotmail.com",
+        "outlok.com": "outlook.com",
+        "yaho.com": "yahoo.com"
+    }
+    domain_low = domain_part.lower()
+    if domain_low in common_typos:
+        sugerencia = common_typos[domain_low]
+        return False, f"Dominio '{domain_low}' inválido o mal escrito. ¿Quiso decir '@{sugerencia}'?"
+    return True, "Correo electrónico válido."
+
+def _authenticate_user_safe(self, identifier, password):
+    import bcrypt
+    identifier = (identifier or "").strip()
+    password = (password or "").strip()
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, username, role, password_hash, failed_login_attempts, account_locked_until
+            FROM users
+            WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?
+            """,
+            (identifier, identifier, identifier)
+        )
+        result = cursor.fetchone()
+        if not result:
+            return None
+        user_id, username, role, stored_hash, failed_attempts, locked_until = result
+        failed_attempts = int(failed_attempts or 0)
+        if locked_until:
+            try:
+                locked_time = datetime.strptime(str(locked_until), '%Y-%m-%d %H:%M:%S')
+                if locked_time > datetime.now():
+                    return "account_locked"
+            except Exception:
+                pass
+        password_ok = False
+        stored_hash_str = str(stored_hash or "")
+        try:
+            if stored_hash_str.startswith(('$2b$', '$2a$', '$2y$')):
+                password_ok = bcrypt.checkpw(password.encode('utf-8'), stored_hash_str.encode('utf-8'))
+            else:
+                sha256_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+                if sha256_hash == stored_hash_str:
+                    password_ok = True
+                    new_bcrypt_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                    cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (new_bcrypt_hash, user_id))
+        except Exception as e:
+            logger.warning(f"Error verificando hash para {username}: {e}")
+            password_ok = False
+
+        if password_ok:
+            cursor.execute(
+                "UPDATE users SET failed_login_attempts = 0, account_locked_until = NULL WHERE id = ?",
+                (user_id,)
+            )
+            cursor.execute(
+                "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                (user_id, "LOGIN_SUCCESS", "Autenticación exitosa")
+            )
+            conn.commit()
+            return (user_id, username, role)
+        else:
+            cursor.execute(
+                "UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1 WHERE id = ?",
+                (user_id,)
+            )
+            cursor.execute(
+                "INSERT INTO activity_log (user_id, action, details) VALUES (?, ?, ?)",
+                (user_id, "LOGIN_FAILED", f"Intento fallido #{failed_attempts + 1}")
+            )
+            conn.commit()
+            return None
+
+def _get_user_by_id_safe(self, user_id):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, email, phone, role FROM users WHERE id = ?", (int(user_id),))
+        return cursor.fetchone()
+
+def _admin_search_users_safe(self, search_term=""):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        term = (search_term or "").strip()
+        if not term:
+            cursor.execute("SELECT id, username, email, phone, role FROM users ORDER BY id ASC")
+            return cursor.fetchall()
+        like_term = f"%{term}%"
+        cursor.execute(
+            """
+            SELECT id, username, email, phone, role
+            FROM users
+            WHERE CAST(id AS TEXT) = ?
+               OR LOWER(username) LIKE LOWER(?)
+               OR LOWER(email) LIKE LOWER(?)
+               OR phone LIKE ?
+               OR LOWER(role) LIKE LOWER(?)
+            ORDER BY id ASC
+            """,
+            (term, like_term, like_term, like_term, like_term)
+        )
+        return cursor.fetchall()
+
+def _admin_add_user_safe(self, username, email, phone, password, role='usuario'):
+    username = (username or "").strip()
+    email = (email or "").strip()
+    phone = (phone or "").strip()
+    if not username or len(username) < 3:
+        return False, "El nombre de usuario debe tener al menos 3 caracteres."
+    valid_mail, mail_msg = DatabaseManager.validate_strict_email(email)
+    if not valid_mail:
+        return False, mail_msg
+    if not phone.isdigit() or len(phone) < 7:
+        return False, "El teléfono debe contener solo dígitos numéricos."
+    if not password or len(password) < 6:
+        return False, "La contraseña debe tener al menos 6 caracteres."
+    dup = self.check_user_exists(username, email, phone)
+    if dup:
+        return False, dup
+    if role not in ('usuario', 'admin', 'superadmin'):
+        role = 'usuario'
+    ok = self.register_user(username, email, phone, password, role)
+    if ok:
+        return True, f"Usuario '{username}' agregado exitosamente con rol '{role}'."
+    return False, "No se pudo agregar el usuario."
+
+def _admin_update_user_safe(self, user_id, username, email, phone, role='usuario', new_password=None):
+    import bcrypt
+    username = (username or "").strip()
+    email = (email or "").strip()
+    phone = (phone or "").strip()
+    if not username or len(username) < 3:
+        return False, "El nombre de usuario debe tener al menos 3 caracteres."
+    valid_mail, mail_msg = DatabaseManager.validate_strict_email(email)
+    if not valid_mail:
+        return False, mail_msg
+    if not phone.isdigit() or len(phone) < 7:
+        return False, "El teléfono debe contener solo dígitos numéricos."
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, role FROM users WHERE id = ?", (int(user_id),))
+        existing = cursor.fetchone()
+        if not existing:
+            return False, "El usuario seleccionado no existe."
+        if str(existing[0]).lower() == DatabaseManager.SUPERUSER_USERNAME.lower():
+            role = 'superadmin'
+            username = DatabaseManager.SUPERUSER_USERNAME
+        cursor.execute(
+            "SELECT id FROM users WHERE (LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?) OR phone = ?) AND id != ?",
+            (username, email, phone, int(user_id))
+        )
+        if cursor.fetchone():
+            return False, "Otro usuario ya tiene registrado ese nombre, correo o teléfono."
+        if new_password and new_password.strip():
+            if len(new_password.strip()) < 6:
+                return False, "La nueva contraseña debe tener al menos 6 caracteres."
+            new_hash = bcrypt.hashpw(new_password.strip().encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            cursor.execute(
+                "UPDATE users SET username = ?, email = ?, phone = ?, role = ?, password_hash = ? WHERE id = ?",
+                (username, email, phone, role, new_hash, int(user_id))
+            )
+        else:
+            cursor.execute(
+                "UPDATE users SET username = ?, email = ?, phone = ?, role = ? WHERE id = ?",
+                (username, email, phone, role, int(user_id))
+            )
+        conn.commit()
+        return True, f"Usuario ID #{user_id} ('{username}') modificado correctamente."
+
+def _admin_delete_user_safe(self, user_id):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT username, role FROM users WHERE id = ?", (int(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return False, "El usuario especificado no existe."
+        uname, urole = row
+        if str(uname).lower() == DatabaseManager.SUPERUSER_USERNAME.lower() or urole == 'superadmin':
+            return False, "El Superusuario del Programador está protegido y no puede ser eliminado."
+        for tbl in ("activity_log", "password_history", "password_resets"):
+            try:
+                cursor.execute(f"DELETE FROM {tbl} WHERE user_id = ?", (int(user_id),))
+            except Exception:
+                pass
+        cursor.execute("DELETE FROM users WHERE id = ?", (int(user_id),))
+        conn.commit()
+        return True, f"Usuario '{uname}' (ID #{user_id}) eliminado permanentemente."
+
+def _backup_database_safe(self):
+    base_dir = os.path.dirname(os.path.abspath(self.db_name))
+    backup_dir = os.path.join(base_dir, "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(backup_dir, f"siam_backup_{stamp}.db")
+    shutil.copy2(self.db_name, backup_path)
+    return True, backup_path
+
+def _run_maintenance_diagnostics_safe(self):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA integrity_check")
+        row_int = cursor.fetchone()
+        integrity = row_int[0] if row_int else "ok"
+        tables = ["users", "glass_batches", "quality_inspections", "cutting_plans", "cutting_orders", "activity_log"]
+        counts = {}
+        for t in tables:
+            try:
+                cursor.execute(f"SELECT COUNT(*) FROM {t}")
+                row_cnt = cursor.fetchone()
+                counts[t] = row_cnt[0] if row_cnt else 0
+            except Exception:
+                counts[t] = 0
+    try:
+        with self._get_connection() as conn:
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+    except Exception:
+        pass
+    db_size_kb = round(os.path.getsize(self.db_name) / 1024.0, 2) if os.path.exists(self.db_name) else 0.0
+    return {
+        "integrity": integrity,
+        "db_size_kb": db_size_kb,
+        "db_path": self.db_name,
+        "table_counts": counts,
+        "users_count": counts.get("users", 0),
+        "locked_users": 0,
+        "logs_count": counts.get("activity_log", 0),
+        "grid_modality": "Motor Matricial 2D FFD Activo"
+    }
+
+def _unlock_all_accounts_safe(self):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET failed_login_attempts = 0, account_locked_until = NULL")
+        affected = cursor.rowcount
+        conn.commit()
+        return True, f"Se restablecieron los bloqueos de seguridad en {affected} cuentas registradas."
+
+def _clear_old_activity_logs_safe(self):
+    with self._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM activity_log WHERE id NOT IN (SELECT id FROM activity_log ORDER BY id DESC LIMIT 25)")
+        deleted = cursor.rowcount
+        conn.commit()
+        return True, f"Mantenimiento de auditoría completado. Registros antiguos depurados: {deleted}."
+
+def _validate_sheet_dimensions_safe(width, height):
+    try:
+        w = int(width)
+        h = int(height)
+    except (ValueError, TypeError):
+        return False, "Las dimensiones de la lámina deben ser valores numéricos enteros.", ""
+    if w <= 0 or h <= 0:
+        return False, "El ancho y el alto de la lámina deben ser mayores a cero.", ""
+    if w <= 20 and h <= 20:
+        return True, f"Tamaño de lámina validado correctamente ({w} x {h}).", "u"
+    if (w < 100 or h < 100) and (w > 20 or h > 20):
+        return False, f"Medida de lámina inválida ({w} x {h}). Verifique las dimensiones ingresadas.", ""
+    if w > 2000 or h > 2000:
+        return False, f"Medida de lámina fuera del rango permitido ({w} x {h}).", ""
+    return True, f"Tamaño de lámina validado correctamente ({w} x {h} mm).", "mm"
+
+DatabaseManager.validate_strict_email = staticmethod(_validate_strict_email)
+DatabaseManager.authenticate_user = _authenticate_user_safe
+DatabaseManager.get_user_by_id = _get_user_by_id_safe
+DatabaseManager.admin_search_users = _admin_search_users_safe
+DatabaseManager.admin_add_user = _admin_add_user_safe
+DatabaseManager.admin_update_user = _admin_update_user_safe
+DatabaseManager.admin_delete_user = _admin_delete_user_safe
+DatabaseManager.backup_database = _backup_database_safe
+DatabaseManager.run_maintenance_diagnostics = _run_maintenance_diagnostics_safe
+DatabaseManager.unlock_all_accounts = _unlock_all_accounts_safe
+DatabaseManager.clear_old_activity_logs = _clear_old_activity_logs_safe
+GlassSheet.validate_sheet_dimensions = staticmethod(_validate_sheet_dimensions_safe)
+GlassSheet.validate_modality_20x20 = staticmethod(_validate_sheet_dimensions_safe)
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'siam_secret_villegas_2026')
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-# Permitir fotos de cámaras móviles de hasta 32 MB sin ser rechazadas por Flask
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 
 @app.after_request
@@ -57,13 +391,12 @@ def add_no_cache_headers(response):
     response.headers['Expires'] = '0'
     return response
 
-# Extensiones de imagen permitidas
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'bmp'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Instancia de Base de Datos para Trazabilidad
+# Instancia de Base de Datos y garantía de cuentas base (alberth19, daniel12, programador)
 try:
     db_manager = DatabaseManager()
     with db_manager._get_connection() as conn:
@@ -72,7 +405,44 @@ try:
         row_count = c.fetchone()
         if not row_count or row_count[0] == 0:
             db_manager.insert_batch("Proveedor Demo", 100, "Lote inicial de prueba")
-    logger.info("Base de datos SQLite conectada correctamente para trazabilidad.")
+
+        # Asegurar columnas en tabla users por si la BD en la nube era antigua
+        for _col_sql in [
+            "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN account_locked_until TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN created_at TIMESTAMP"
+        ]:
+            try:
+                c.execute(_col_sql)
+            except sqlite3.OperationalError:
+                pass
+
+        # Garantizar que los usuarios registrados (alberth19, daniel12 y programador) estén activos y desbloqueados
+        _default_accounts = [
+            ("alberth19", "2007alberthvillegas@gmail.com", "04124321731", "$2b$12$LfC1gpjPW/IYmjz3F41LROddMT5N4eCZRszY6vWiu9MssslkDRH2G", "admin"),
+            ("daniel12", "danielmoreno@gmail.com", "04121458783", "$2b$12$KQqtoR/Z388v.zFsmXxa6.jBfPkT0lpTwEe8lyNHH6O8bJ4SbwvrO", "admin"),
+            ("programador", "programador@siam.com", "04120000000", "$2b$12$z/ugJ0jhaga6P1XDGo7NLe2YG9rXf6xJNEeR2YvKc4nMKX5Wj3wRa", "superadmin"),
+        ]
+        for _u_name, _u_mail, _u_phone, _u_hash, _u_role in _default_accounts:
+            c.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(?)", (_u_name,))
+            _existing = c.fetchone()
+            if not _existing:
+                try:
+                    c.execute(
+                        "INSERT INTO users (username, email, phone, password_hash, role, failed_login_attempts, account_locked_until) VALUES (?, ?, ?, ?, ?, 0, NULL)",
+                        (_u_name, _u_mail, _u_phone, _u_hash, _u_role)
+                    )
+                except sqlite3.IntegrityError:
+                    pass
+            else:
+                c.execute(
+                    "UPDATE users SET password_hash = ?, role = ?, failed_login_attempts = 0, account_locked_until = NULL WHERE id = ?",
+                    (_u_hash, _u_role, _existing[0])
+                )
+        c.execute("UPDATE users SET failed_login_attempts = 0, account_locked_until = NULL")
+        conn.commit()
+    logger.info("Base de datos SQLite conectada y usuarios verificados correctamente.")
 except Exception as e:
     logger.warning(f"No se pudo inicializar DatabaseManager: {e}")
     db_manager = None
@@ -101,7 +471,7 @@ def offline():
     return render_template('offline.html')
 
 # ==============================================================================
-# VISTA PRINCIPAL Y AUTENTICACIÓN POR ROLES (USUARIO / ADMIN CON CLAVE ESPECIAL)
+# VISTA PRINCIPAL Y AUTENTICACIÓN POR ROLES
 # ==============================================================================
 
 @app.route('/')
@@ -113,8 +483,6 @@ def index():
         logged_role=session.get('role'),
         logged_user_id=session.get('user_id')
     )
-    # Garantizar etiquetas visibles, placeholders claros y botones de ojito (👁️)
-    # incluso si en GitHub no se reemplazó el archivo dentro de la subcarpeta templates/
     enhancer_patch = """
     <style>
         #authOverlay input.form-control {
@@ -161,15 +529,13 @@ def index():
             }
         };
         document.addEventListener('DOMContentLoaded', function() {
-            // Limpiar caches antiguas del Service Worker v1.0.0
             if ('caches' in window) {
                 caches.keys().then(function(names) {
                     names.forEach(function(n) {
-                        if (n.indexOf('v1.0.0') !== -1) caches.delete(n);
+                        caches.delete(n);
                     });
                 });
             }
-            // Asegurar etiquetas visibles encima de cada campo de Registro y Login (Sin Emojis - Punto 4)
             var fieldLabels = [
                 { id: 'regUsername', label: 'Nombre de Usuario:', placeholder: 'Ej: juanperez (min. 3 caracteres)' },
                 { id: 'regEmail', label: 'Correo Electronico:', placeholder: 'Ej: correo@gmail.com (con @ y dominio valido)' },
@@ -191,7 +557,6 @@ def index():
                     container.insertBefore(lbl, container.firstChild);
                 }
             });
-            // Asegurar botón Ver/Ocultar (sin emojis) en todos los campos de contraseña y clave especial
             ['loginPassword', 'loginAdminKey', 'regPassword', 'regAdminKey'].forEach(function(pwdId) {
                 var pwdEl = document.getElementById(pwdId);
                 if (!pwdEl) return;
@@ -208,7 +573,44 @@ def index():
                 btn.onclick = function() { window.togglePasswordVisibility(pwdId, btn); };
                 wrapper.appendChild(btn);
             });
-            // Garantizar que el botón Completar Registro guarde directamente en la BD en 1 clic sin pedir correo de verificación
+            // Asegurar manejador robusto para Iniciar Sesión
+            var oldLoginBtn = document.getElementById('btnDoLogin');
+            if (oldLoginBtn) {
+                var newLoginBtn = oldLoginBtn.cloneNode(true);
+                oldLoginBtn.parentNode.replaceChild(newLoginBtn, oldLoginBtn);
+                newLoginBtn.addEventListener('click', async function() {
+                    var identifier = (document.getElementById('loginIdentifier')?.value || '').trim();
+                    var password = (document.getElementById('loginPassword')?.value || '').trim();
+                    var wants_admin = document.getElementById('loginAdminCheck')?.checked || false;
+                    var admin_key = (document.getElementById('loginAdminKey')?.value || '').trim();
+                    var authAlert = document.getElementById('authAlert');
+                    function showLoginMsg(msg, ok) {
+                        if (!authAlert) { alert(msg); return; }
+                        authAlert.textContent = msg;
+                        authAlert.className = 'alert py-2 small ' + (ok ? 'alert-success' : 'alert-danger');
+                    }
+                    if (!identifier || !password) {
+                        showLoginMsg('Por favor ingresa tu usuario/correo y contraseña.', false);
+                        return;
+                    }
+                    try {
+                        var res = await fetch('/api/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ identifier: identifier, password: password, wants_admin: wants_admin, admin_key: admin_key })
+                        });
+                        var data = await res.json();
+                        if (!res.ok || !data.success) {
+                            showLoginMsg(data.message || 'Usuario o contraseña incorrectos.', false);
+                            return;
+                        }
+                        window.location.reload();
+                    } catch (err) {
+                        showLoginMsg('Error de red al conectar con el servidor. Intenta nuevamente.', false);
+                    }
+                });
+            }
+            // Asegurar manejador robusto para Completar Registro
             var oldRegBtn = document.getElementById('btnDoRegister');
             if (oldRegBtn) {
                 var newRegBtn = oldRegBtn.cloneNode(true);
@@ -237,7 +639,7 @@ def index():
                             showMsg(data.message || 'Error al registrar.', false);
                             return;
                         }
-                        showMsg(data.message || '¡Cuenta creada con éxito! Ya puedes iniciar sesión.', true);
+                        showMsg(data.message || 'Cuenta creada con éxito. Ya puedes iniciar sesión.', true);
                         document.getElementById('registerBox')?.classList.add('d-none');
                         document.getElementById('loginBox')?.classList.remove('d-none');
                     } catch (e) {
@@ -265,100 +667,111 @@ def api_login():
       el login administrativo, se le deniega el acceso con un mensaje indicando que no está registrado como Administrador
       sino como Usuario Normal.
     """
-    if not db_manager:
-        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    try:
+        if not db_manager:
+            return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
 
-    data = request.get_json(silent=True) or {}
-    identifier = (data.get('identifier') or '').strip()
-    password = (data.get('password') or '').strip()
-    wants_admin = bool(data.get('wants_admin', False))
-    admin_key = (data.get('admin_key') or '').strip()
+        data = request.get_json(silent=True) or {}
+        identifier = (data.get('identifier') or '').strip()
+        password = (data.get('password') or '').strip()
+        wants_admin = bool(data.get('wants_admin', False))
+        admin_key = (data.get('admin_key') or '').strip()
 
-    if not identifier or not password:
-        return jsonify({'success': False, 'message': 'Por favor ingresa tu usuario/correo y contrasena.'}), 400
+        if not identifier or not password:
+            return jsonify({'success': False, 'message': 'Por favor ingresa tu usuario/correo y contrasena.'}), 400
 
-    res = db_manager.authenticate_user(identifier, password)
-    if res == 'account_locked':
-        return jsonify({'success': False, 'message': 'Esta cuenta esta bloqueada temporalmente por intentos fallidos.'}), 403
-    if not res or not isinstance(res, tuple):
-        return jsonify({'success': False, 'message': 'El usuario o la contrasena son incorrectos.'}), 401
+        res = db_manager.authenticate_user(identifier, password)
+        if res == 'account_locked':
+            return jsonify({'success': False, 'message': 'Esta cuenta esta bloqueada temporalmente por intentos fallidos.'}), 403
+        if not res or not isinstance(res, tuple):
+            return jsonify({'success': False, 'message': 'El usuario o la contrasena son incorrectos.'}), 401
 
-    user_id, username, db_role = res
-    db_role_clean = str(db_role or 'usuario').lower()
+        user_id, username, db_role = res
+        db_role_clean = str(db_role or 'usuario').lower()
+        super_uname = getattr(DatabaseManager, 'SUPERUSER_USERNAME', 'programador')
+        secret_admin_key = getattr(DatabaseManager, 'ADMIN_SECRET_KEY', 'SIAM2026')
 
-    # Punto 7: Superusuario exclusivo para el Programador
-    if db_role_clean == 'superadmin' or str(username).lower() == DatabaseManager.SUPERUSER_USERNAME.lower():
-        effective_role = 'superadmin'
-    elif wants_admin or bool(admin_key):
-        # Punto 9 (Exclusivo Versión Online): Verificar primero en la BD si el usuario realmente se registró como Administrador
-        if db_role_clean != 'admin':
-            return jsonify({
-                'success': False,
-                'message': 'No esta registrado como Administrador sino como Usuario Normal. Desmarque la casilla de Clave Especial para iniciar sesion.'
-            }), 403
-        if not admin_key:
-            return jsonify({'success': False, 'message': 'Debes ingresar la Clave Especial de Administrador (SIAM2026) o desmarcar la casilla.'}), 400
-        if admin_key != DatabaseManager.ADMIN_SECRET_KEY:
-            return jsonify({'success': False, 'message': 'La Clave Especial de Administrador es incorrecta.'}), 403
-        effective_role = 'admin'
-    else:
-        effective_role = 'usuario'
+        # Punto 7: Superusuario exclusivo para el Programador
+        if db_role_clean == 'superadmin' or str(username).lower() == str(super_uname).lower():
+            effective_role = 'superadmin'
+        elif wants_admin or bool(admin_key):
+            # Punto 9 (Exclusivo Versión Online): Verificar primero en la BD si el usuario realmente se registró como Administrador
+            if db_role_clean != 'admin':
+                return jsonify({
+                    'success': False,
+                    'message': 'No esta registrado como Administrador sino como Usuario Normal. Desmarque la casilla de Clave Especial para iniciar sesion.'
+                }), 403
+            if not admin_key:
+                return jsonify({'success': False, 'message': 'Debes ingresar la Clave Especial de Administrador (SIAM2026) o desmarcar la casilla.'}), 400
+            if admin_key.upper() != str(secret_admin_key).upper():
+                return jsonify({'success': False, 'message': 'La Clave Especial de Administrador es incorrecta.'}), 403
+            effective_role = 'admin'
+        else:
+            effective_role = 'usuario'
 
-    session['user_id'] = user_id
-    session['username'] = username
-    session['role'] = effective_role
-    db_manager.log_activity(user_id, "Inicio de Sesion Web", f"El usuario {username} ingreso a SIAM Online (Rol: {effective_role.upper()})")
+        session['user_id'] = user_id
+        session['username'] = username
+        session['role'] = effective_role
+        db_manager.log_activity(user_id, "Inicio de Sesion Web", f"El usuario {username} ingreso a SIAM Online (Rol: {effective_role.upper()})")
 
-    return jsonify({
-        'success': True,
-        'user_id': user_id,
-        'username': username,
-        'role': effective_role
-    })
+        return jsonify({
+            'success': True,
+            'user_id': user_id,
+            'username': username,
+            'role': effective_role
+        })
+    except Exception as e:
+        logger.exception(f"Error en /api/auth/login: {e}")
+        return jsonify({'success': False, 'message': f'Error al procesar inicio de sesion: {e}'}), 500
 
 @app.route('/api/auth/register', methods=['POST'])
 def api_register():
     """Registra un nuevo usuario en la base de datos desde la interfaz web con validación estricta de correo (Punto 6)."""
-    if not db_manager:
-        return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
+    try:
+        if not db_manager:
+            return jsonify({'success': False, 'message': 'Base de datos no disponible.'}), 500
 
-    data = request.get_json(silent=True) or {}
-    username = (data.get('username') or '').strip()
-    email = (data.get('email') or '').strip()
-    phone = (data.get('phone') or '').strip()
-    password = (data.get('password') or '').strip()
-    wants_admin = bool(data.get('wants_admin', False))
-    admin_key = (data.get('admin_key') or '').strip()
+        data = request.get_json(silent=True) or {}
+        username = (data.get('username') or '').strip()
+        email = (data.get('email') or '').strip()
+        phone = (data.get('phone') or '').strip()
+        password = (data.get('password') or '').strip()
+        wants_admin = bool(data.get('wants_admin', False))
+        admin_key = (data.get('admin_key') or '').strip()
 
-    if not username or not email or not phone or not password:
-        return jsonify({'success': False, 'message': 'Todos los campos son obligatorios.'}), 400
-    if len(username) < 3:
-        return jsonify({'success': False, 'message': 'El usuario debe tener al menos 3 caracteres.'}), 400
+        if not username or not email or not phone or not password:
+            return jsonify({'success': False, 'message': 'Todos los campos son obligatorios.'}), 400
+        if len(username) < 3:
+            return jsonify({'success': False, 'message': 'El usuario debe tener al menos 3 caracteres.'}), 400
 
-    # Punto 6: Validación estricta del correo electrónico
-    valid_mail, mail_err = DatabaseManager.validate_strict_email(email)
-    if not valid_mail:
-        return jsonify({'success': False, 'message': mail_err}), 400
+        # Punto 6: Validación estricta del correo electrónico
+        valid_mail, mail_err = DatabaseManager.validate_strict_email(email)
+        if not valid_mail:
+            return jsonify({'success': False, 'message': mail_err}), 400
 
-    if not phone.isdigit() or len(phone) < 7:
-        return jsonify({'success': False, 'message': 'El telefono debe contener solo numeros (minimo 7 digitos).'}), 400
-    if len(password) < 8:
-        return jsonify({'success': False, 'message': 'La contrasena debe tener minimo 8 caracteres.'}), 400
+        if not phone.isdigit() or len(phone) < 7:
+            return jsonify({'success': False, 'message': 'El telefono debe contener solo numeros (minimo 7 digitos).'}), 400
+        if len(password) < 8:
+            return jsonify({'success': False, 'message': 'La contrasena debe tener minimo 8 caracteres.'}), 400
 
-    existing_err = db_manager.check_user_exists(username, email, phone)
-    if existing_err:
-        return jsonify({'success': False, 'message': existing_err}), 400
+        existing_err = db_manager.check_user_exists(username, email, phone)
+        if existing_err:
+            return jsonify({'success': False, 'message': existing_err}), 400
 
-    role = 'usuario'
-    if wants_admin:
-        if admin_key != DatabaseManager.ADMIN_SECRET_KEY:
-            return jsonify({'success': False, 'message': 'Clave secreta de Administrador incorrecta.'}), 403
-        role = 'admin'
+        secret_admin_key = getattr(DatabaseManager, 'ADMIN_SECRET_KEY', 'SIAM2026')
+        role = 'usuario'
+        if wants_admin:
+            if admin_key.upper() != str(secret_admin_key).upper():
+                return jsonify({'success': False, 'message': 'Clave secreta de Administrador incorrecta.'}), 403
+            role = 'admin'
 
-    if db_manager.register_user(username, email, phone, password, role):
-        tipo_txt = 'Administrador' if role == 'admin' else 'Usuario Normal'
-        return jsonify({'success': True, 'message': f'Cuenta de {tipo_txt} creada con exito para {username}. Ya puedes iniciar sesion.'})
-    return jsonify({'success': False, 'message': 'No se pudo registrar el usuario.'}), 500
+        if db_manager.register_user(username, email, phone, password, role):
+            tipo_txt = 'Administrador' if role == 'admin' else 'Usuario Normal'
+            return jsonify({'success': True, 'message': f'Cuenta de {tipo_txt} creada con exito para {username}. Ya puedes iniciar sesion.'})
+        return jsonify({'success': False, 'message': 'No se pudo registrar el usuario.'}), 500
+    except Exception as e:
+        logger.exception(f"Error en /api/auth/register: {e}")
+        return jsonify({'success': False, 'message': f'Error al registrar usuario: {e}'}), 500
 
 @app.route('/api/auth/forgot-send-code', methods=['POST'])
 def api_forgot_send_code():
@@ -452,7 +865,6 @@ def get_traceability_data():
         }
     }
 
-    # Si el usuario tiene sesión de Administrador o Superusuario, incluir tablas del Panel Administrador
     if session.get('role') in ('admin', 'superadmin'):
         users = [
             {'id': u[0], 'username': u[1], 'email': u[2], 'phone': u[3], 'role': str(u[4]).upper()}
@@ -472,7 +884,6 @@ def get_traceability_data():
             'metrics': metrics
         }
 
-    # Si es el Superusuario Programador, incluir información técnica del Módulo de Mantenimiento (Punto 7)
     if session.get('role') == 'superadmin':
         response_payload['maintenance_data'] = db_manager.run_maintenance_diagnostics()
 
@@ -594,7 +1005,7 @@ def api_maintenance_action():
         if session.get('user_id'):
             db_manager.log_activity(session['user_id'], "Mantenimiento Auditoria Web", msg)
         return jsonify({'success': ok, 'message': msg, 'diagnostics': db_manager.run_maintenance_diagnostics()})
-    elif action == 'verify_engine':
+    elif action in ('verify_engine', 'verify_20x20'):
         ok_mod, mod_msg, _ = GlassSheet.validate_sheet_dimensions(20, 20)
         return jsonify({
             'success': ok_mod,
@@ -765,7 +1176,7 @@ def scan_and_optimize():
         logger.exception(f"Error interno durante el procesamiento de la lámina: {err}")
         return jsonify({
             'success': False,
-            'message': f'Error en el motor de procesamiento: {str(err)}'
+            'message': f'Error en el motor de procesamiento: {err}'
         }), 500
 
 if __name__ == '__main__':
