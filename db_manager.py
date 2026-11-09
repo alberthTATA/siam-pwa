@@ -560,12 +560,13 @@ class DatabaseManager:
         """1. Agregar Usuario desde el Panel Administrativo."""
         username = (username or "").strip()
         phone = (phone or "").strip()
-        if not username or len(username) < 3:
-            return False, "El nombre de usuario debe tener al menos 3 caracteres."
-        if not phone.isdigit() or len(phone) < 7:
-            return False, "El teléfono debe contener solo dígitos numéricos (mínimo 7 dígitos)."
-        if not password or len(password) < 6:
-            return False, "La contraseña debe tener al menos 6 caracteres."
+        password = (password or "").strip()
+        if not username or len(username) < 3 or len(username) > 15:
+            return False, "El nombre de usuario debe tener entre 3 y 15 caracteres."
+        if not phone.isdigit() or len(phone) != 11:
+            return False, "El teléfono debe tener exactamente 11 dígitos numéricos (mínimo 11 y máximo 11)."
+        if not password or len(password) < 8 or len(password) > 12:
+            return False, "La contraseña debe tener un mínimo de 8 y un máximo de 12 caracteres."
         dup = self.check_user_exists(username, phone)
         if dup:
             return False, dup
@@ -581,10 +582,10 @@ class DatabaseManager:
         import bcrypt
         username = (username or "").strip()
         phone = (phone or "").strip()
-        if not username or len(username) < 3:
-            return False, "El nombre de usuario debe tener al menos 3 caracteres."
-        if not phone.isdigit() or len(phone) < 7:
-            return False, "El teléfono debe contener solo dígitos numéricos (mínimo 7 dígitos)."
+        if not username or len(username) < 3 or len(username) > 15:
+            return False, "El nombre de usuario debe tener entre 3 y 15 caracteres."
+        if not phone.isdigit() or len(phone) != 11:
+            return False, "El teléfono debe tener exactamente 11 dígitos numéricos (mínimo 11 y máximo 11)."
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT username, role FROM users WHERE id = ?", (int(user_id),))
@@ -601,9 +602,10 @@ class DatabaseManager:
             if cursor.fetchone():
                 return False, "Otro usuario ya tiene registrado ese nombre de usuario o teléfono."
             if new_password and new_password.strip():
-                if len(new_password.strip()) < 6:
-                    return False, "La nueva contraseña debe tener al menos 6 caracteres."
-                new_hash = bcrypt.hashpw(new_password.strip().encode(), bcrypt.gensalt()).decode('utf-8')
+                clean_pwd = new_password.strip()
+                if len(clean_pwd) < 8 or len(clean_pwd) > 12:
+                    return False, "La nueva contraseña debe tener un mínimo de 8 y un máximo de 12 caracteres."
+                new_hash = bcrypt.hashpw(clean_pwd.encode(), bcrypt.gensalt()).decode('utf-8')
                 cursor.execute(
                     "UPDATE users SET username = ?, phone = ?, role = ?, password_hash = ? WHERE id = ?",
                     (username, phone, role, new_hash, int(user_id))

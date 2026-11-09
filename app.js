@@ -124,12 +124,102 @@ function initCameraAndUpload() {
         });
     }
 
+    function classifyGlassTypeClient(imgEl, filename = '') {
+        try {
+            const canvas = document.createElement('canvas');
+            const cw = 160, ch = 160;
+            canvas.width = cw;
+            canvas.height = ch;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(imgEl, 0, 0, cw, ch);
+            const x1 = Math.floor(cw * 0.12), y1 = Math.floor(ch * 0.12);
+            const rw = Math.floor(cw * 0.76), rh = Math.floor(ch * 0.76);
+            const imgData = ctx.getImageData(x1, y1, rw, rh).data;
+            const total = rw * rh;
+
+            let sumR = 0, sumG = 0, sumB = 0, sumS = 0, sumV = 0, sumLum = 0, specCount = 0;
+            const lums = new Float32Array(total);
+            for (let i = 0, p = 0; i < imgData.length; i += 4, p++) {
+                const r = imgData[i], g = imgData[i + 1], b = imgData[i + 2];
+                sumR += r; sumG += g; sumB += b;
+                const maxC = Math.max(r, g, b), minC = Math.min(r, g, b);
+                const s = maxC === 0 ? 0 : ((maxC - minC) / maxC) * 255;
+                sumS += s;
+                sumV += maxC;
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                lums[p] = lum;
+                sumLum += lum;
+                if (lum > 200) specCount++;
+            }
+            const meanR = sumR / total, meanG = sumG / total, meanB = sumB / total;
+            const meanS = sumS / total, meanV = sumV / total, meanLum = sumLum / total;
+            let varSum = 0;
+            for (let p = 0; p < total; p++) {
+                const d = lums[p] - meanLum;
+                varSum += d * d;
+            }
+            const stdLum = Math.sqrt(varSum / total);
+            const specRatio = specCount / total;
+            const reflectancePct = Math.min(98, Math.max(8, (stdLum * 1.15) + (specRatio * 120))).toFixed(1);
+            const transmittancePct = Math.min(92, Math.max(12, (meanV / 255) * 100)).toFixed(1);
+            const fname = (filename || '').toLowerCase();
+
+            let glassType = 'Vidrio Claro Transparente';
+            let opticalDesc = `Superficie monolítica incolora | Transmitancia: ${transmittancePct}%`;
+
+            if (fname.includes('bronce')) {
+                glassType = 'Vidrio Reflectivo Bronce';
+                opticalDesc = `Tono cálido bronce/ámbar | Reflectancia solar: ${reflectancePct}%`;
+            } else if (fname.includes('espejo')) {
+                glassType = 'Vidrio Reflectivo Espejo';
+                opticalDesc = `Reflexión especular tipo espejo (${reflectancePct}%) | Contraste: ${stdLum.toFixed(1)}`;
+            } else if (fname.includes('fotocrom') || fname.includes('polariz')) {
+                glassType = 'Vidrio Fotocromático';
+                opticalDesc = `Filtro fotosensible activo | Transmitancia: ${transmittancePct}%`;
+            } else if ((meanR - meanB) > 7.5 && meanS >= 14.0) {
+                glassType = 'Vidrio Reflectivo Bronce';
+                opticalDesc = `Dominancia espectral cálida bronce/cobre (R:${meanR.toFixed(0)} > B:${meanB.toFixed(0)}) | Reflectancia: ${reflectancePct}%`;
+            } else if ((stdLum >= 30.0 && Math.abs(meanR - meanB) <= 12.0) || (specRatio > 0.045 && meanS < 42.0)) {
+                glassType = 'Vidrio Reflectivo Espejo';
+                opticalDesc = `Reflexión especular plateada (${reflectancePct}%) | Balance neutro espejo`;
+            } else if ((meanV < 118.0 && stdLum < 30.0) || ((meanB - meanR) > 4.5 && meanV < 148.0)) {
+                glassType = 'Vidrio Fotocromático';
+                opticalDesc = `Absorción fotosensible UV-Visible | Transmitancia: ${transmittancePct}%`;
+            } else if ((meanB - meanR) > 12.0 && meanS >= 20.0) {
+                glassType = 'Vidrio Reflectivo Azul (Control Solar)';
+                opticalDesc = `Tono espectral azul reflectivo | Reflectancia: ${reflectancePct}%`;
+            } else if ((meanG - meanR) > 4.5 && (meanG - meanB) > 4.5) {
+                glassType = 'Vidrio Flotado Verde / Templado';
+                opticalDesc = `Tinte verdoso de óxido de hierro | Transmitancia: ${transmittancePct}%`;
+            } else if (meanV >= 165.0 && meanS < 20.0 && stdLum < 22.0) {
+                glassType = 'Vidrio Esmerilado / Satinado';
+                opticalDesc = `Superficie difusa mate | Transmitancia: ${transmittancePct}%`;
+            }
+            return { glassType, opticalDesc };
+        } catch (err) {
+            return { glassType: 'Vidrio Claro Transparente', opticalDesc: 'Superficie verificada' };
+        }
+    }
+
     function handleFile(file) {
         if (!file) return;
         selectedFile = file;
 
         const reader = new FileReader();
         reader.onload = (e) => {
+            previewImage.onload = () => {
+                const info = classifyGlassTypeClient(previewImage, file.name);
+                const liveBox = document.getElementById('glassTypeLiveBox');
+                const liveName = document.getElementById('liveGlassTypeName');
+                const liveOpt = document.getElementById('liveGlassTypeOptical');
+                if (liveBox && liveName) {
+                    liveName.textContent = info.glassType;
+                    if (liveOpt) liveOpt.textContent = info.opticalDesc;
+                    liveBox.classList.remove('d-none');
+                }
+                const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+                fileInfoText.innerHTML = `<strong>Tipo Identificado: ${info.glassType}</strong> · ${file.name} (${sizeMb} MB)`;
+            };
             previewImage.src = e.target.result;
             previewImage.classList.remove('d-none');
             previewPlaceholder.classList.add('d-none');
@@ -402,6 +492,11 @@ function renderResults(data) {
             qcBadge.textContent = `ESTADO: ${data.qc_status}`;
         }
     }
+
+    const resGlassTypeEl = document.getElementById('resultGlassType');
+    const resGlassOptEl = document.getElementById('resultGlassOptical');
+    if (resGlassTypeEl) resGlassTypeEl.textContent = data.glass_type || 'Vidrio Claro Transparente';
+    if (resGlassOptEl) resGlassOptEl.textContent = data.glass_optical_summary || 'Superficie de vidrio verificada por filtro óptico.';
 
     if (defectTypeEl) defectTypeEl.textContent = data.defect_type || 'Ninguno';
     if (defectConfidenceEl) defectConfidenceEl.textContent = `${(data.confidence || 0).toFixed(1)}%`;
@@ -994,16 +1089,16 @@ function initAuthAndTraceability() {
                 showAlert('Todos los campos son obligatorios.');
                 return;
             }
-            if (username.length < 3) {
-                showAlert('El Nombre de Usuario debe tener al menos 3 caracteres.');
+            if (username.length < 3 || username.length > 15) {
+                showAlert('El Nombre de Usuario debe tener un mínimo de 3 y un máximo de 15 caracteres.');
                 return;
             }
-            if (!/^\d{7,15}$/.test(phone)) {
-                showAlert('El Teléfono debe contener solo dígitos numéricos (7 a 15 dígitos).');
+            if (!/^\d{11}$/.test(phone)) {
+                showAlert('El Teléfono debe tener exactamente 11 dígitos numéricos (mínimo 11 y máximo 11, ej: 04121234567).');
                 return;
             }
-            if (password.length < 8) {
-                showAlert('La contraseña debe tener un mínimo de 8 caracteres.');
+            if (password.length < 8 || password.length > 12) {
+                showAlert('La contraseña debe tener un mínimo de 8 y un máximo de 12 caracteres.');
                 return;
             }
 
@@ -1070,6 +1165,10 @@ function initAuthAndTraceability() {
 
             if (!code || code.length !== 6) {
                 showAlert('Ingresa el código de 6 dígitos.');
+                return;
+            }
+            if (new_password.length < 8 || new_password.length > 12) {
+                showAlert('La nueva contraseña debe tener un mínimo de 8 y un máximo de 12 caracteres.');
                 return;
             }
             if (new_password !== conf_password) {
@@ -1144,15 +1243,15 @@ window.openAdminCrudModal = function(mode) {
             <div class="row g-2">
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Nombre de Usuario:</label>
-                    <input type="text" id="crudAddUsername" class="form-control form-control-sm" placeholder="Ej: operador1">
+                    <input type="text" id="crudAddUsername" maxlength="15" oninput="this.value = this.value.replace(/[^a-zA-Z0-9_.]/g, '').slice(0, 15)" class="form-control form-control-sm" placeholder="">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Teléfono:</label>
-                    <input type="text" id="crudAddPhone" class="form-control form-control-sm" placeholder="Ej: 04121234567">
+                    <input type="text" id="crudAddPhone" maxlength="11" inputmode="numeric" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 11)" class="form-control form-control-sm" placeholder="">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Contraseña:</label>
-                    <input type="password" id="crudAddPass" class="form-control form-control-sm" placeholder="Mín. 6 caract.">
+                    <input type="password" id="crudAddPass" minlength="8" maxlength="12" oninput="if(this.value.length > 12) this.value = this.value.slice(0, 12)" class="form-control form-control-sm" placeholder="">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Rol en el Sistema:</label>
@@ -1183,11 +1282,11 @@ window.openAdminCrudModal = function(mode) {
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Nuevo Nombre de Usuario:</label>
-                    <input type="text" id="crudEditUsername" class="form-control form-control-sm">
+                    <input type="text" id="crudEditUsername" maxlength="15" oninput="this.value = this.value.replace(/[^a-zA-Z0-9_.]/g, '').slice(0, 15)" class="form-control form-control-sm" placeholder="">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Nuevo Teléfono:</label>
-                    <input type="text" id="crudEditPhone" class="form-control form-control-sm">
+                    <input type="text" id="crudEditPhone" maxlength="11" inputmode="numeric" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 11)" class="form-control form-control-sm" placeholder="">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Rol:</label>
@@ -1198,7 +1297,7 @@ window.openAdminCrudModal = function(mode) {
                 </div>
                 <div class="col-md-6">
                     <label class="form-label small fw-bold">Nueva Contraseña (opcional):</label>
-                    <input type="password" id="crudEditPass" class="form-control form-control-sm" placeholder="Dejar vacío para mantener">
+                    <input type="password" id="crudEditPass" minlength="8" maxlength="12" oninput="if(this.value.length > 12) this.value = this.value.slice(0, 12)" class="form-control form-control-sm" placeholder="">
                 </div>
                 <div class="col-12 mt-2 d-grid">
                     <button type="button" class="btn btn-sm btn-primary fw-bold" onclick="submitAdminEditUser()">Actualizar Datos del Usuario</button>

@@ -73,12 +73,12 @@
                 <div id="loginBox">
                     <div class="mb-3">
                         <label class="siam-auth-label" for="loginIdentifier">Nombre de Usuario o Teléfono:</label>
-                        <input type="text" id="loginIdentifier" class="form-control siam-auth-input" placeholder="Ej: alberth19 o daniel12">
+                        <input type="text" id="loginIdentifier" maxlength="15" class="form-control siam-auth-input" placeholder="">
                     </div>
                     <div class="mb-2">
                         <label class="siam-auth-label" for="loginPassword">Contraseña:</label>
                         <div class="input-group">
-                            <input type="password" id="loginPassword" class="form-control siam-auth-input" placeholder="Ingresa tu contraseña">
+                            <input type="password" id="loginPassword" minlength="8" maxlength="12" class="form-control siam-auth-input" placeholder="">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('loginPassword', this)" title="Mostrar / Ocultar contraseña">
                                 Ver
                             </button>
@@ -95,7 +95,7 @@
                     <div id="loginAdminKeyWrapper" class="mb-2 d-none">
                         <label class="siam-auth-label text-info" for="loginAdminKey">Clave Especial de Administrador:</label>
                         <div class="input-group">
-                            <input type="password" id="loginAdminKey" class="form-control siam-auth-input" placeholder="Clave Especial de Administrador">
+                            <input type="password" id="loginAdminKey" maxlength="10" class="form-control siam-auth-input" placeholder="">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('loginAdminKey', this)" title="Mostrar / Ocultar clave">
                                 Ver
                             </button>
@@ -125,24 +125,20 @@
                     
                     <div class="mb-2">
                         <label class="siam-auth-label" for="regUsername">Nombre de Usuario:</label>
-                        <input type="text" id="regUsername" class="form-control form-control-sm siam-auth-input" placeholder="Ej: juanperez (mín. 3 caract.)">
+                        <input type="text" id="regUsername" minlength="3" maxlength="15" oninput="this.value = this.value.replace(/[^a-zA-Z0-9_.]/g, '').slice(0, 15)" class="form-control form-control-sm siam-auth-input" placeholder="">
                     </div>
                     <div class="mb-2">
                         <label class="siam-auth-label" for="regPhone">Teléfono:</label>
-                        <input type="text" id="regPhone" class="form-control form-control-sm siam-auth-input" placeholder="Ej: 04121234567 (solo números)">
+                        <input type="text" id="regPhone" minlength="11" maxlength="11" inputmode="numeric" pattern="[0-9]{11}" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 11)" class="form-control form-control-sm siam-auth-input" placeholder="">
                     </div>
                     <div class="mb-2">
                         <label class="siam-auth-label" for="regPassword">Contraseña:</label>
                         <div class="input-group input-group-sm">
-                            <input type="password" id="regPassword" class="form-control siam-auth-input" placeholder="••••••••">
+                            <input type="password" id="regPassword" minlength="8" maxlength="12" oninput="if(this.value.length > 12) this.value = this.value.slice(0, 12)" class="form-control siam-auth-input" placeholder="">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('regPassword', this)" title="Mostrar / Ocultar contraseña">
                                 Ver
                             </button>
                         </div>
-                    </div>
-
-                    <div class="p-2 mb-2 rounded" style="background:#0B0E14;border:1px solid #1E293B;font-size:11px;color:#94A3B8;">
-                        <strong>Requisitos:</strong> Mín. 8 caract., 1 Mayúscula, 1 Minúscula, 1 Número y 1 Símbolo (!@#$...)
                     </div>
 
                     <div class="form-check mb-2">
@@ -152,7 +148,7 @@
                     <div id="regAdminKeyWrapper" class="mb-2 d-none">
                         <label class="siam-auth-label text-info" for="regAdminKey">Clave Secreta de Administrador:</label>
                         <div class="input-group input-group-sm">
-                            <input type="password" id="regAdminKey" class="form-control siam-auth-input" placeholder="Clave secreta de Administrador">
+                            <input type="password" id="regAdminKey" maxlength="10" class="form-control siam-auth-input" placeholder="">
                             <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('regAdminKey', this)" title="Mostrar / Ocultar clave">
                                 Ver
                             </button>
@@ -179,7 +175,7 @@
                     <div id="forgotStep1">
                         <div class="mb-3">
                             <label class="siam-auth-label" for="forgotIdentifier">Usuario o Teléfono Registrado:</label>
-                            <input type="text" id="forgotIdentifier" class="form-control form-control-sm siam-auth-input" placeholder="Ej: alberth19 o 04124321731">
+                            <input type="text" id="forgotIdentifier" maxlength="15" class="form-control form-control-sm siam-auth-input" placeholder="">
                         </div>
                         <div class="d-grid gap-2">
                             <button type="button" id="btnForgotSendCode" class="btn btn-primary btn-sm fw-bold py-2" style="background:#1A73E8;border:none;">
@@ -192,19 +188,19 @@
                         <div id="forgotInboxBanner" class="p-2 mb-2 rounded text-center fw-bold" style="background:#0c2340;border:1px dashed #0284C7;color:#38BDF8;font-size:13px;"></div>
                         <div class="mb-2">
                             <label class="siam-auth-label" for="forgotCodeInput">Código de 6 dígitos:</label>
-                            <input type="text" id="forgotCodeInput" maxlength="6" class="form-control form-control-sm siam-auth-input text-center fw-bold" style="font-size:18px;letter-spacing:6px;color:#38BDF8 !important;" placeholder="000000">
+                            <input type="text" id="forgotCodeInput" maxlength="6" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 6)" class="form-control form-control-sm siam-auth-input text-center fw-bold" style="font-size:18px;letter-spacing:6px;color:#38BDF8 !important;" placeholder="">
                         </div>
                         <div class="mb-2">
                             <label class="siam-auth-label" for="forgotNewPassword">Nueva Contraseña:</label>
                             <div class="input-group input-group-sm">
-                                <input type="password" id="forgotNewPassword" class="form-control siam-auth-input" placeholder="Mín. 8 caract, mayús, núm, símb.">
+                                <input type="password" id="forgotNewPassword" minlength="8" maxlength="12" oninput="if(this.value.length > 12) this.value = this.value.slice(0, 12)" class="form-control siam-auth-input" placeholder="">
                                 <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('forgotNewPassword', this)">Ver</button>
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="siam-auth-label" for="forgotConfPassword">Confirmar Nueva Contraseña:</label>
                             <div class="input-group input-group-sm">
-                                <input type="password" id="forgotConfPassword" class="form-control siam-auth-input" placeholder="Repite la nueva contraseña">
+                                <input type="password" id="forgotConfPassword" minlength="8" maxlength="12" oninput="if(this.value.length > 12) this.value = this.value.slice(0, 12)" class="form-control siam-auth-input" placeholder="">
                                 <button class="btn btn-eye-toggle" type="button" onclick="togglePasswordVisibility('forgotConfPassword', this)">Ver</button>
                             </div>
                         </div>
@@ -334,6 +330,13 @@
                             <img id="previewImage" src="" alt="Previsualización de lámina" class="d-none">
                         </div>
 
+                        <div id="glassTypeLiveBox" class="alert alert-info py-2 px-3 mt-2 mb-1 d-none" style="background:#0c2340;border:1px solid #0284C7;color:#E0E6ED;">
+                            <div class="fw-bold" style="color:#38BDF8;font-size:13px;">
+                                Filtro Óptico SIAM — <span id="liveGlassTypeName">Analizando...</span>
+                            </div>
+                            <div id="liveGlassTypeOptical" class="small" style="color:#94A3B8;font-size:11.5px;"></div>
+                        </div>
+
                         <div class="mt-2 text-center">
                             <span id="fileInfoText" class="text-muted small">Ningún archivo seleccionado</span>
                         </div>
@@ -439,6 +442,11 @@
                         <span id="resultQcBadge" class="qc-badge qc-esperando">ESPERANDO</span>
                     </div>
                     <div class="card-body p-3">
+                        <div class="p-2 mb-3 rounded" style="background:#0F1520;border:1px solid #0284C7;color:#E0E6ED;">
+                            <div class="small fw-bold" style="color:#38BDF8;">Tipo de Vidrio Identificado (Filtro Óptico):</div>
+                            <div id="resultGlassType" class="fw-bold fs-6 text-white">--</div>
+                            <div id="resultGlassOptical" class="small" style="color:#94A3B8;font-size:12px;">--</div>
+                        </div>
                         <div class="row g-3">
                             <div class="col-6 col-md-3">
                                 <div class="metric-box">

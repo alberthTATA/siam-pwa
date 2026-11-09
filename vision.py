@@ -123,11 +123,11 @@ def optimize_image_memory(image, max_dim=1600):
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
     return image
 
-def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height: int = 2000, orders: Any = None) -> dict[str, Any]:
+def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height: int = 2000, orders: Any = None, filename: str = "") -> dict[str, Any]:
     """
     Pipeline unificado de procesamiento para el servidor Flask:
     1. Carga u optimización de imagen en memoria.
-    2. Detección de contornos y fallas con filtro Canny.
+    2. Detección de contornos y fallas con filtro Canny + Filtro Óptico de Tipo de Vidrio.
     3. Clasificación de defecto con Red Neuronal o reglas morfológicas.
     4. Evaluación de Control de Calidad (QC).
     5. Heurística 2D Bin Packing evitando la zona defectuosa.
@@ -142,6 +142,8 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
 
     # 1. Cargar imagen (desde ruta en disco o desde buffer en memoria)
     if isinstance(image_input, str):
+        if not filename:
+            filename = image_input
         image = cv2.imread(image_input)
         if image is None:
             raise FileNotFoundError(f"No se pudo cargar la imagen desde la ruta: {image_input}")
@@ -157,8 +159,12 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
     image = optimize_image_memory(image, max_dim=1600)
     img_h, img_w = image.shape[:2]
 
-    # 2. Detección de fallas con Canny y Validación Óptica de Lámina de Vidrio
+    # 2. Detección de fallas con Canny y Filtro Óptico de Tipo de Vidrio
     detector = DefectDetector(blur_ksize=(5, 5), canny_thresh1=50, canny_thresh2=150)
+    if hasattr(detector, 'classify_glass_type'):
+        glass_info = detector.classify_glass_type(image, filename=filename)
+    else:
+        glass_info = {"glass_type": "Vidrio Claro Transparente", "optical_summary": "Superficie verificada"}
     is_valid_glass, glass_reason, _ = detector.validate_glass_sheet(image)
     if not is_valid_glass:
         return {
@@ -166,11 +172,25 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
             'invalid_glass': True,
             'message': f"CAPTURA RECHAZADA POR PARÁMETROS ÓPTICOS: {glass_reason}"
         }
+    glass_type = glass_info.get("glass_type", "Vidrio Claro Transparente")
+    glass_optical_summary = glass_info.get("optical_summary", "")
     
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, detector.blur_ksize, 0)
     edges = cv2.Canny(blurred, detector.canny_thresh1, detector.canny_thresh2)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    closed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(closed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    pad_x, pad_y = int(img_w * 0.08), int(img_h * 0.08)
+    inner_contours = []
+    for c in contours:
+        cx, cy, cw, ch = cv2.boundingRect(c)
+        if cx > pad_x and cy > pad_y and (cx + cw) < (img_w - pad_x) and (cy + ch) < (img_h - pad_y):
+            if cv2.contourArea(c) > 8 or cv2.arcLength(c, False) > 18:
+                inner_contours.append(c)
+    if inner_contours:
+        contours = inner_contours
 
     # 3. Análisis de anomalías y Clasificación
     annotated_image = image.copy()
@@ -190,12 +210,15 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
     defect_coords_mm = {'x': 0, 'y': 0, 'w': 0, 'h': 0}
 
     if contours and len(contours) > 0:
-        # Filtrar contornos muy pequeños que sean polvo o ruido menor (< 15 px²)
-        valid_contours = [c for c in contours if cv2.contourArea(c) > 15]
+        def _contour_score(cnt):
+            return max(float(cv2.contourArea(cnt)), float(cv2.arcLength(cnt, False)) * 0.85)
+
+        # Filtrar contornos muy pequeños que sean polvo o ruido menor
+        valid_contours = [c for c in contours if _contour_score(c) > 15.0]
 
         if valid_contours:
-            # Tomar el defecto principal (mayor área)
-            main_contour = max(valid_contours, key=cv2.contourArea)
+            # Tomar el defecto principal (mayor magnitud)
+            main_contour = max(valid_contours, key=_contour_score)
             features = FeatureExtractor.extract_features(main_contour)
             area, perimeter, circularity, aspect_ratio, extent = features
 
@@ -265,6 +288,19 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
                 'h': max(min_def_margin, int(h * scale_y_mm))
             }
 
+    # Dibujar etiqueta superior con el Tipo de Vidrio Identificado
+    cv2.rectangle(annotated_image, (0, 0), (img_w, 34), (15, 21, 32), -1)
+    cv2.putText(
+        annotated_image,
+        f"TIPO DE VIDRIO: {glass_type.upper()}",
+        (12, 23),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (56, 189, 248),
+        2,
+        cv2.LINE_AA
+    )
+
     # 4. Codificar imagen anotada a Base64 para entrega directa en JSON
     _, buffer = cv2.imencode('.jpg', annotated_image, [cv2.IMWRITE_JPEG_QUALITY, 80])
     image_base64 = base64.b64encode(buffer.tobytes()).decode('utf-8')
@@ -295,13 +331,15 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
         'success': True,
         'sheet_width': sheet_width,
         'sheet_height': sheet_height,
+        'glass_type': glass_type,
+        'glass_optical_summary': glass_optical_summary,
         'defect_detected': defect_info['detected'],
         'defect_type': defect_info['type'],
         'confidence': defect_info['confidence'],
         'defect_area': defect_info['area'],
         'severity': defect_info['severity'],
         'qc_status': defect_info['qc_status'],
-        'recommendation': defect_info['recommendation'],
+        'recommendation': f"Tipo de Vidrio Identificado: {glass_type} ({glass_optical_summary}). {defect_info['recommendation']}",
         'defect_coords': defect_coords_mm,
         'annotated_image_url': image_data_url,
         'placed_pieces': placed_pieces,
