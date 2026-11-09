@@ -159,41 +159,71 @@ def process_glass_sheet(image_input: Any, sheet_width: int = 2000, sheet_height:
     image = optimize_image_memory(image, max_dim=1600)
     img_h, img_w = image.shape[:2]
 
-    # 2. Detección de fallas con Canny y Filtro Óptico de Tipo de Vidrio
+    # 2. Detección de fallas con Canny y Filtro Óptico-Geométrico de Tipo de Vidrio
     detector = DefectDetector(blur_ksize=(5, 5), canny_thresh1=50, canny_thresh2=150)
-    if hasattr(detector, 'classify_glass_type'):
-        glass_info = detector.classify_glass_type(image, filename=filename)
-    else:
-        glass_info = {"glass_type": "Vidrio Claro Transparente", "optical_summary": "Superficie verificada"}
-    is_valid_glass, glass_reason, _ = detector.validate_glass_sheet(image)
+    is_valid_glass, glass_reason, glass_info = detector.validate_glass_sheet(image, filename=filename)
     if not is_valid_glass:
         return {
             'success': False,
             'invalid_glass': True,
             'message': f"CAPTURA RECHAZADA POR PARÁMETROS ÓPTICOS: {glass_reason}"
         }
+    if not isinstance(glass_info, dict) or "glass_type" not in glass_info:
+        glass_info = detector.classify_glass_type(image, filename=filename)
     glass_type = glass_info.get("glass_type", "Vidrio Claro Transparente")
     glass_optical_summary = glass_info.get("optical_summary", "")
-    
+    glass_bbox = glass_info.get("glass_bbox")
+    is_held = bool(glass_info.get("is_held_by_person", False))
+    reg_info = getattr(detector, 'last_glass_region', None)
+    skin_mask = reg_info.get("skin_mask") if isinstance(reg_info, dict) else None
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, detector.blur_ksize, 0)
-    edges = cv2.Canny(blurred, detector.canny_thresh1, detector.canny_thresh2)
+    raw_edges = cv2.Canny(blurred, detector.canny_thresh1, detector.canny_thresh2)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    closed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-    contours, _ = cv2.findContours(closed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    pad_x, pad_y = int(img_w * 0.08), int(img_h * 0.08)
-    inner_contours = []
-    for c in contours:
-        cx, cy, cw, ch = cv2.boundingRect(c)
-        if cx > pad_x and cy > pad_y and (cx + cw) < (img_w - pad_x) and (cy + ch) < (img_h - pad_y):
-            if cv2.contourArea(c) > 8 or cv2.arcLength(c, False) > 18:
-                inner_contours.append(c)
-    if inner_contours:
-        contours = inner_contours
+    if glass_bbox is not None:
+        gx1, gy1, gx2, gy2 = glass_bbox
+    else:
+        gx1, gy1 = int(img_w * 0.08), int(img_h * 0.08)
+        gx2, gy2 = img_w - gx1, img_h - gy1
+
+    if is_held:
+        ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
+        glass_interior = np.zeros((img_h, img_w), dtype=np.uint8)
+        glass_interior[gy1 + 6:max(gy1 + 7, gy2 - 6), gx1 + 6:max(gx1 + 7, gx2 - 6)] = 255
+        if skin_mask is not None:
+            person_mask = ((skin_mask > 0) | (ycrcb[:, :, 1] >= 128) | (gray < 90)).astype(np.uint8) * 255
+        else:
+            person_mask = ((ycrcb[:, :, 1] >= 128) | (gray < 90)).astype(np.uint8) * 255
+        k_person = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+        person_mask = cv2.dilate(person_mask, k_person, iterations=2)
+        screen_refl = (gray > 200).astype(np.uint8) * 255
+        k_refl = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+        screen_refl = cv2.dilate(screen_refl, k_refl, iterations=2)
+        pure_glass_mask = cv2.bitwise_and(
+            glass_interior,
+            cv2.bitwise_not(cv2.bitwise_or(person_mask, screen_refl))
+        )
+        internal_edges = cv2.bitwise_and(raw_edges, pure_glass_mask)
+        closed_edges = cv2.morphologyEx(internal_edges, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(closed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = [c for c in contours if cv2.contourArea(c) > 8 or cv2.arcLength(c, False) > 18]
+    else:
+        closed_edges = cv2.morphologyEx(raw_edges, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(closed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        inner_contours = []
+        for c in contours:
+            cx, cy, cw, ch = cv2.boundingRect(c)
+            if cx > gx1 and cy > gy1 and (cx + cw) < gx2 and (cy + ch) < gy2:
+                if cv2.contourArea(c) > 8 or cv2.arcLength(c, False) > 18:
+                    inner_contours.append(c)
+        if inner_contours:
+            contours = inner_contours
 
     # 3. Análisis de anomalías y Clasificación
     annotated_image = image.copy()
+    cv2.rectangle(annotated_image, (gx1, gy1), (gx2, gy2), (0, 255, 0), 3)
     defect_info: dict[str, Any] = {
         'detected': False,
         'type': 'Ninguno',

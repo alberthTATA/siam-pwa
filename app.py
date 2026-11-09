@@ -356,53 +356,170 @@ def _validate_sheet_dimensions_safe(width, height):
         return False, f"Medida de lámina fuera del rango permitido ({w} x {h}).", ""
     return True, f"Tamaño de lámina validado correctamente ({w} x {h} mm).", "mm"
 
-def _classify_glass_type_safe(self, image, filename="", filter_mode="auto"):
+def _merge_collinear_segments_safe(h_segs, v_segs):
+    h_segs = sorted(h_segs, key=lambda s: s[0])
+    merged_h = []
+    for ym, x1, x2, L in h_segs:
+        placed = False
+        for i, (mym, mx1, mx2, mL) in enumerate(merged_h):
+            if abs(ym - mym) <= 14 and not (x2 < mx1 - 35 or x1 > mx2 + 35):
+                nx1, nx2 = min(mx1, x1), max(mx2, x2)
+                nym = int((mym * mL + ym * L) / max(1.0, mL + L))
+                merged_h[i] = (nym, nx1, nx2, float(nx2 - nx1))
+                placed = True
+                break
+        if not placed:
+            merged_h.append((ym, x1, x2, L))
+    v_segs = sorted(v_segs, key=lambda s: s[0])
+    merged_v = []
+    for xm, y1, y2, L in v_segs:
+        placed = False
+        for i, (mxm, my1, my2, mL) in enumerate(merged_v):
+            if abs(xm - mxm) <= 14 and not (y2 < my1 - 35 or y1 > my2 + 35):
+                ny1, ny2 = min(my1, y1), max(my2, y2)
+                nxm = int((mxm * mL + xm * L) / max(1.0, mL + L))
+                merged_v[i] = (nxm, ny1, ny2, float(ny2 - ny1))
+                placed = True
+                break
+        if not placed:
+            merged_v.append((xm, y1, y2, L))
+    return merged_h, merged_v
+
+def _detect_glass_sheet_region_safe(self, image):
     if image is None or image.size == 0:
-        return {"glass_type": "Vidrio Claro Transparente", "optical_summary": "Sin datos ópticos", "reflectance_pct": 0.0, "transmittance_pct": 0.0}
+        return {"is_valid": False, "is_held_by_person": False, "bbox": None, "skin_mask": None, "skin_pct": 0.0, "reason": "No se recibió una imagen válida."}
+    h, w = image.shape[:2]
     bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if len(image.shape) == 2 else image
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    ycrcb = cv2.cvtColor(bgr, cv2.COLOR_BGR2YCrCb)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+
+    black_ratio = float(np.mean(gray < 20))
+    b_g_diff = float(np.mean(np.abs(bgr[:, :, 0].astype(np.float32) - bgr[:, :, 1].astype(np.float32))))
+    r_g_diff = float(np.mean(np.abs(bgr[:, :, 2].astype(np.float32) - bgr[:, :, 1].astype(np.float32))))
+    if black_ratio > 0.58 or (black_ratio > 0.40 and b_g_diff < 2.5 and r_g_diff < 2.5):
+        return {"is_valid": False, "is_held_by_person": False, "bbox": None, "skin_mask": np.zeros((h, w), dtype=np.uint8), "skin_pct": 0.0, "reason": "Cámara sin señal de video o DroidCam inactivo (pantalla en negro)."}
+
+    skin_raw = ((ycrcb[:, :, 1] >= 133) & (ycrcb[:, :, 1] <= 182) & (ycrcb[:, :, 2] >= 80) & (ycrcb[:, :, 2] <= 138) & (hsv[:, :, 0] <= 26) & (hsv[:, :, 1] >= 35) & (hsv[:, :, 2] >= 40)).astype(np.uint8) * 255
+    kernel_skin = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    skin_mask = cv2.dilate(cv2.morphologyEx(skin_raw, cv2.MORPH_CLOSE, kernel_skin), kernel_skin, iterations=2)
+    skin_pct = float(np.mean(skin_raw > 0)) * 100.0
+
+    if skin_pct >= 3.5:
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.bitwise_or(cv2.Canny(blur, 16, 50), cv2.Canny(blur, 35, 100))
+        roi = np.zeros_like(edges)
+        roi[int(h * 0.18):int(h * 0.90), int(w * 0.14):int(w * 0.92)] = edges[int(h * 0.18):int(h * 0.90), int(w * 0.14):int(w * 0.92)]
+        lines = cv2.HoughLinesP(roi, 1, np.pi / 180, threshold=22, minLineLength=int(min(w, h) * 0.14), maxLineGap=28)
+        h_segs, v_segs = [], []
+        if lines is not None:
+            for l in lines:
+                x1, y1, x2, y2 = np.asarray(l).flatten()[:4]
+                ang = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+                L = float(np.hypot(x2 - x1, y2 - y1))
+                if ang <= 14.0 or ang >= 166.0:
+                    h_segs.append((int((y1 + y2) / 2), int(min(x1, x2)), int(max(x1, x2)), L))
+                elif 76.0 <= ang <= 104.0:
+                    xm = int((x1 + x2) / 2)
+                    left_strip = gray[min(y1, y2):max(y1, y2) + 1, max(0, xm - 65):max(1, xm - 10)]
+                    if xm < int(w * 0.28) and left_strip.size > 0 and float(np.mean(left_strip)) < 52.0:
+                        continue
+                    v_segs.append((xm, int(min(y1, y2)), int(max(y1, y2)), L))
+        h_segs, v_segs = _merge_collinear_segments_safe(h_segs, v_segs)
+        best_rect, best_score = None, -1.0
+        for y_top, tx1, tx2, tL in h_segs:
+            if tL < w * 0.22: continue
+            for y_bot, bx1, bx2, bL in h_segs:
+                rect_h = y_bot - y_top
+                if rect_h < h * 0.24 or rect_h > h * 0.78: continue
+                for x_left, ly1, ly2, lL in v_segs:
+                    if lL < h * 0.22 or abs(tx1 - x_left) > 38: continue
+                    if min(ly2, y_bot + 25) - max(ly1, y_top - 25) < rect_h * 0.45: continue
+                    for x_right, ry1, ry2, rL in v_segs:
+                        if rL < h * 0.22: continue
+                        rect_w = x_right - x_left
+                        if rect_w < w * 0.24 or rect_w > w * 0.80: continue
+                        if x_right > max(tx2, bx2) + 38 or x_right < max(tx2, bx2) - int(w * 0.20): continue
+                        if min(ry2, y_bot + 25) - max(ry1, y_top - 25) < rect_h * 0.45: continue
+                        if (min(tx2, x_right + 25) - max(tx1, x_left - 25)) < rect_w * 0.45: continue
+                        if (min(bx2, x_right + 25) - max(bx1, x_left - 25)) < rect_w * 0.35: continue
+                        score = tL + bL + lL + rL + 1.5 * (rect_w + rect_h)
+                        if score > best_score:
+                            best_score = score
+                            best_rect = (int(x_left), int(y_top), int(x_right), int(y_bot))
+        if best_rect is None:
+            return {"is_valid": False, "is_held_by_person": True, "bbox": None, "skin_mask": skin_mask, "skin_pct": round(skin_pct, 1), "reason": "CAPTURA RECHAZADA: Se detectó una persona o fondo de habitación SIN una lámina de vidrio frente a la cámara."}
+        return {"is_valid": True, "is_held_by_person": True, "bbox": best_rect, "skin_mask": skin_mask, "skin_pct": round(skin_pct, 1), "reason": "Lámina física de vidrio detectada y aislada del operador."}
+
+    pad_x, pad_y = int(w * 0.06), int(h * 0.06)
+    return {"is_valid": True, "is_held_by_person": False, "bbox": (pad_x, pad_y, w - pad_x, h - pad_y), "skin_mask": skin_mask, "skin_pct": round(skin_pct, 1), "reason": "Lámina de vidrio en plano completo."}
+
+def _classify_glass_type_safe(self, image, filename="", filter_mode="auto", region_info=None):
+    if image is None or image.size == 0:
+        return {"glass_type": "Vidrio Claro Transparente", "optical_summary": "Sin datos ópticos", "reflectance_pct": 0.0, "transmittance_pct": 0.0, "glass_bbox": None, "is_held_by_person": False}
+    bgr = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR) if len(image.shape) == 2 else image
+    if region_info is None:
+        region_info = _detect_glass_sheet_region_safe(self, bgr)
     h, w = bgr.shape[:2]
-    roi = bgr[int(h * 0.12):max(int(h * 0.12) + 1, int(h * 0.88)), int(w * 0.12):max(int(w * 0.12) + 1, int(w * 0.88))]
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    mean_b, mean_g, mean_r = float(np.mean(roi[:, :, 0])), float(np.mean(roi[:, :, 1])), float(np.mean(roi[:, :, 2]))
-    mean_h, mean_s, mean_v = float(np.mean(hsv[:, :, 0])), float(np.mean(hsv[:, :, 1])), float(np.mean(hsv[:, :, 2]))
-    std_lum = float(np.std(gray))
-    spec_ratio = float(np.mean(gray > 200))
-    reflectance_pct = round(min(98.0, max(8.0, (std_lum * 1.15) + (spec_ratio * 120.0))), 1)
+    bbox = region_info.get("bbox")
+    is_held = bool(region_info.get("is_held_by_person", False))
+    skin_mask = region_info.get("skin_mask")
+    gx1, gy1, gx2, gy2 = bbox if bbox is not None else (int(w * 0.12), int(h * 0.12), int(w * 0.88), int(h * 0.88))
+    roi = bgr[gy1:gy2, gx1:gx2]
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+    if is_held and roi.size > 0:
+        rw, rh = max(10, gx2 - gx1), max(10, gy2 - gy1)
+        strip_x2 = max(8, int(rw * 0.32))
+        strip_y1, strip_y2 = min(rh - 2, int(rh * 0.08)), max(4, int(rh * 0.90))
+        pure_bgr = roi[strip_y1:strip_y2, 4:strip_x2]
+        pure_hsv = hsv_roi[strip_y1:strip_y2, 4:strip_x2]
+        if pure_bgr.size == 0:
+            pure_bgr, pure_hsv = roi, hsv_roi
+        mean_b, mean_g, mean_r = float(np.mean(pure_bgr[:, :, 0])), float(np.mean(pure_bgr[:, :, 1])), float(np.mean(pure_bgr[:, :, 2]))
+        mean_h, mean_s, mean_v = float(np.mean(pure_hsv[:, :, 0])), float(np.mean(pure_hsv[:, :, 1])), float(np.mean(pure_hsv[:, :, 2]))
+        non_skin_gray = gray_roi[skin_mask[gy1:gy2, gx1:gx2] == 0] if (skin_mask is not None and np.any(skin_mask[gy1:gy2, gx1:gx2] == 0)) else gray_roi
+        std_lum = float(np.std(pure_bgr))
+        spec_ratio = float(np.mean(non_skin_gray > 205))
+    else:
+        mean_b, mean_g, mean_r = float(np.mean(roi[:, :, 0])), float(np.mean(roi[:, :, 1])), float(np.mean(roi[:, :, 2]))
+        mean_h, mean_s, mean_v = float(np.mean(hsv_roi[:, :, 0])), float(np.mean(hsv_roi[:, :, 1])), float(np.mean(hsv_roi[:, :, 2]))
+        std_lum = float(np.std(gray_roi))
+        spec_ratio = float(np.mean(gray_roi > 200))
+
+    reflectance_pct = round(min(98.0, max(8.0, (std_lum * 1.15) + (spec_ratio * 180.0))), 1)
     transmittance_pct = round(min(92.0, max(12.0, (mean_v / 255.0) * 100.0)), 1)
     fname_clean = os.path.basename(str(filename or "")).lower()
-    if "bronce" in fname_clean or ((mean_r - mean_b) > 7.5 and mean_s >= 14.0):
+    if "bronce" in fname_clean or ((mean_r - mean_b) >= 9.5 and mean_s >= 14.0):
         g_type = "Vidrio Reflectivo Bronce"
         opt_desc = f"Dominancia espectral cálida bronce/cobre (R:{mean_r:.0f} > B:{mean_b:.0f}) | Reflectancia solar: {reflectance_pct}%"
-    elif "espejo" in fname_clean or (std_lum >= 30.0 and abs(mean_r - mean_b) <= 12.0) or (spec_ratio > 0.045 and mean_s < 42.0):
+    elif "espejo" in fname_clean or (spec_ratio >= 0.025 and abs(mean_r - mean_b) < 9.5) or (not is_held and std_lum >= 30.0 and abs(mean_r - mean_b) <= 12.0):
         g_type = "Vidrio Reflectivo Espejo"
         opt_desc = f"Reflexión especular tipo espejo ({reflectance_pct}%) | Balance neutro plateado"
-    elif "fotocrom" in fname_clean or "polariz" in fname_clean or (mean_v < 118.0 and std_lum < 30.0) or ((mean_b - mean_r) > 4.5 and mean_v < 148.0) or (112.0 <= mean_h <= 168.0 and mean_s >= 16.0 and mean_v < 160.0):
+    elif "fotocrom" in fname_clean or "polariz" in fname_clean or (mean_v < 118.0 and std_lum < 30.0) or ((mean_b - mean_r) > 4.5 and mean_v < 145.0) or (112.0 <= mean_h <= 168.0 and mean_s >= 16.0 and mean_v < 155.0):
         g_type = "Vidrio Fotocromático"
         opt_desc = f"Filtro fotosensible / absorción UV-Visible activa | Transmitancia: {transmittance_pct}%"
     elif (mean_b - mean_r) > 12.0 and mean_s >= 20.0:
         g_type = "Vidrio Reflectivo Azul (Control Solar)"
         opt_desc = f"Tono espectral azul reflectivo | Reflectancia: {reflectance_pct}%"
-    elif (mean_g - mean_r) > 4.5 and (mean_g - mean_b) > 4.5:
+    elif (mean_g - mean_r) > 4.0 and (mean_g - mean_b) > 4.0:
         g_type = "Vidrio Flotado Verde / Templado"
         opt_desc = f"Tinte verdoso característico de silicato/hierro | Transmitancia: {transmittance_pct}%"
-    elif mean_v >= 165.0 and mean_s < 20.0 and std_lum < 22.0:
+    elif not is_held and mean_v >= 165.0 and mean_s < 20.0 and std_lum < 22.0:
         g_type = "Vidrio Esmerilado / Satinado"
         opt_desc = f"Superficie mate difusa uniforme | Transmitancia: {transmittance_pct}%"
     else:
         g_type = "Vidrio Claro Transparente"
-        opt_desc = f"Superficie monolítica incolora | Transmitancia: {transmittance_pct}%"
-    return {"glass_type": g_type, "optical_summary": opt_desc, "reflectance_pct": reflectance_pct, "transmittance_pct": transmittance_pct}
+        opt_desc = f"Superficie monolítica transparente | Transmitancia: {transmittance_pct}%"
+    return {"glass_type": g_type, "optical_summary": opt_desc, "reflectance_pct": reflectance_pct, "transmittance_pct": transmittance_pct, "glass_bbox": bbox, "is_held_by_person": is_held}
 
 def _validate_glass_sheet_safe(self, image, filename="", filter_mode="auto"):
-    if image is None or image.size == 0:
-        return False, "No se recibió una imagen válida.", {}
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-    mean_lum = float(np.mean(gray))
-    std_intensity = float(np.std(gray))
-    if mean_lum < 2.0 and std_intensity < 1.5:
-        return False, "La cámara entrega una imagen completamente oscura. Verifique que el lente esté descubierto.", {"mean_lum": mean_lum}
-    info = _classify_glass_type_safe(self, image, filename=filename, filter_mode=filter_mode)
+    region_info = _detect_glass_sheet_region_safe(self, image)
+    self.last_glass_region = region_info
+    if not region_info.get("is_valid", False):
+        return False, region_info.get("reason", "No se detectó una lámina de vidrio válida."), {"glass_bbox": None}
+    info = _classify_glass_type_safe(self, image, filename=filename, filter_mode=filter_mode, region_info=region_info)
     return True, f"Tipo detectado: {info['glass_type']} ({info['optical_summary']})", info
 
 DatabaseManager.check_user_exists = _check_user_exists_safe
@@ -421,6 +538,7 @@ DatabaseManager.unlock_all_accounts = _unlock_all_accounts_safe
 DatabaseManager.clear_old_activity_logs = _clear_old_activity_logs_safe
 GlassSheet.validate_sheet_dimensions = staticmethod(_validate_sheet_dimensions_safe)
 GlassSheet.validate_modality_20x20 = staticmethod(_validate_sheet_dimensions_safe)
+DefectDetector.detect_glass_sheet_region = _detect_glass_sheet_region_safe
 DefectDetector.classify_glass_type = _classify_glass_type_safe
 DefectDetector.validate_glass_sheet = _validate_glass_sheet_safe
 
@@ -1168,6 +1286,35 @@ def api_validate_sheet():
 # ENDPOINT DE PROCESAMIENTO MÓVIL (OpenCV + Red Neuronal + Bin Packing)
 # ==============================================================================
 
+@app.route('/api/vision/classify-glass', methods=['POST'])
+def api_vision_classify_glass():
+    """Clasifica el tipo de vidrio y valida que exista una lámina de vidrio frente a la cámara."""
+    try:
+        if 'image' not in request.files:
+            return jsonify({'success': False, 'message': 'No se encontro el archivo de imagen.'}), 400
+        file = request.files['image']
+        filename = file.filename or ''
+        filter_mode = (request.form.get('filter_mode') or 'auto').strip()
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if image is None:
+            return jsonify({'success': False, 'message': 'Archivo de imagen corrupto o invalido.'}), 400
+        is_valid, val_msg, glass_info = _validate_glass_sheet_safe(image, filename=filename, filter_mode=filter_mode)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'message': f'CAPTURA RECHAZADA: {val_msg} Coloque una pieza fisica de vidrio frente a la camara.',
+                'glass_info': glass_info
+            }), 400
+        return jsonify({
+            'success': True,
+            'message': val_msg,
+            'glass_info': glass_info
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @app.route('/api/scan-and-optimize', methods=['POST'])
 def scan_and_optimize():
     """
@@ -1249,6 +1396,19 @@ def scan_and_optimize():
                 }), 400
 
         # Ejecutar Pipeline en vision.py (incluye validación óptica de lámina de vidrio)
+        nparr_chk = np.frombuffer(image_bytes, np.uint8)
+        img_chk = cv2.imdecode(nparr_chk, cv2.IMREAD_COLOR)
+        det_chk = DefectDetector()
+        is_val_chk, reason_chk, g_info_chk = _validate_glass_sheet_safe(det_chk, img_chk, filename=filename)
+        if not is_val_chk:
+            if db_manager and session.get('user_id'):
+                db_manager.log_activity(session['user_id'], "Captura Rechazada Web", "Objeto no válido (no es lámina de vidrio)")
+            return jsonify({
+                'success': False,
+                'invalid_glass': True,
+                'message': reason_chk
+            }), 422
+
         try:
             result = process_glass_sheet(
                 image_input=image_bytes,
@@ -1266,15 +1426,8 @@ def scan_and_optimize():
             )
 
         if result.get('success') and not result.get('glass_type'):
-            try:
-                nparr = np.frombuffer(image_bytes, np.uint8)
-                img_decoded = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                g_info = _classify_glass_type_safe(None, img_decoded, filename=filename)
-                result['glass_type'] = g_info.get('glass_type', 'Vidrio Claro Transparente')
-                result['glass_optical_summary'] = g_info.get('optical_summary', '')
-            except Exception:
-                result['glass_type'] = 'Vidrio Claro Transparente'
-                result['glass_optical_summary'] = ''
+            result['glass_type'] = g_info_chk.get('glass_type', 'Vidrio Claro Transparente')
+            result['glass_optical_summary'] = g_info_chk.get('optical_summary', '')
 
         if not result.get('success'):
             if db_manager and session.get('user_id'):
