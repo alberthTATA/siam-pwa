@@ -207,25 +207,56 @@ function initCameraAndUpload() {
 
         const reader = new FileReader();
         reader.onload = (e) => {
-            previewImage.onload = () => {
-                const info = classifyGlassTypeClient(previewImage, file.name);
+            previewImage.onload = async () => {
                 const liveBox = document.getElementById('glassTypeLiveBox');
                 const liveName = document.getElementById('liveGlassTypeName');
                 const liveOpt = document.getElementById('liveGlassTypeOptical');
-                if (liveBox && liveName) {
-                    liveName.textContent = info.glassType;
-                    if (liveOpt) liveOpt.textContent = info.opticalDesc;
-                    liveBox.classList.remove('d-none');
-                }
                 const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
-                fileInfoText.innerHTML = `<strong>Tipo Identificado: ${info.glassType}</strong> · ${file.name} (${sizeMb} MB)`;
+
+                try {
+                    const fd = new FormData();
+                    fd.append('image', file);
+                    const res = await fetch('/api/vision/classify-glass', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) {
+                        const errMsg = data.message || 'CAPTURA RECHAZADA: No se detectó una lámina de vidrio frente a la cámara.';
+                        if (liveBox && liveName) {
+                            liveBox.style.background = '#3b0d0d';
+                            liveBox.style.borderColor = '#EF4444';
+                            liveName.textContent = 'RECHAZADO (NO ES LÁMINA DE VIDRIO)';
+                            if (liveOpt) liveOpt.textContent = errMsg;
+                            liveBox.classList.remove('d-none');
+                        }
+                        fileInfoText.innerHTML = `<strong class="text-danger">${errMsg}</strong>`;
+                        if (btnSubmit) btnSubmit.setAttribute('disabled', 'disabled');
+                        alert(errMsg);
+                        return;
+                    }
+                    if (liveBox && liveName) {
+                        liveBox.style.background = '#0c2340';
+                        liveBox.style.borderColor = '#0284C7';
+                        liveName.textContent = data.glass_type;
+                        if (liveOpt) liveOpt.textContent = data.optical_summary || '';
+                        liveBox.classList.remove('d-none');
+                    }
+                    fileInfoText.innerHTML = `<strong>Tipo Identificado: ${data.glass_type}</strong> · ${file.name} (${sizeMb} MB)`;
+                    if (btnSubmit) btnSubmit.removeAttribute('disabled');
+                } catch (err) {
+                    const info = classifyGlassTypeClient(previewImage, file.name);
+                    if (liveBox && liveName) {
+                        liveName.textContent = info.glassType;
+                        if (liveOpt) liveOpt.textContent = info.opticalDesc;
+                        liveBox.classList.remove('d-none');
+                    }
+                    fileInfoText.innerHTML = `<strong>Tipo Identificado: ${info.glassType}</strong> · ${file.name} (${sizeMb} MB)`;
+                }
             };
             previewImage.src = e.target.result;
             previewImage.classList.remove('d-none');
             previewPlaceholder.classList.add('d-none');
             
             const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
-            fileInfoText.innerHTML = `<strong>Captura lista:</strong> ${file.name} (${sizeMb} MB)`;
+            fileInfoText.innerHTML = `<strong>Verificando lámina...</strong> ${file.name} (${sizeMb} MB)`;
             fileInfoText.classList.remove('text-muted');
             fileInfoText.classList.add('text-success');
 

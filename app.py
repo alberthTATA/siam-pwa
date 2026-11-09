@@ -33,6 +33,7 @@ for _src_name, _dst_rel in [
     ('sw.js', os.path.join('static', 'sw.js')),
     ('db_manager.py', os.path.join('src', 'database', 'db_manager.py')),
     ('bin_packing.py', os.path.join('src', 'optimization', 'bin_packing.py')),
+    ('canny_detector.py', os.path.join('src', 'vision', 'canny_detector.py')),
 ]:
     _src_p = os.path.join(_BASE_DIR, _src_name)
     _dst_p = os.path.join(_BASE_DIR, _dst_rel)
